@@ -1,0 +1,18 @@
+# Local development cluster for WattLake.
+# Usage: make cluster-up / make cluster-down
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: wattlake
+servers: 1
+agents: 1
+image: rancher/k3s:v1.35.5-k3s1
+options:
+  k3d:
+    wait: true
+    timeout: "180s"
+  kubeconfig:
+    # Writes the k3d-wattlake context into the file referenced by $KUBECONFIG.
+    updateDefaultKubeconfig: true
+    # Do not change current-context: every command passes --context explicitly.
+    switchCurrentContext: false
