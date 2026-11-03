@@ -2,8 +2,15 @@ CLUSTER_NAME        := wattlake
 KUBE_CONTEXT        := k3d-$(CLUSTER_NAME)
 EXPECTED_KUBECONFIG := $(HOME)/.kube/perso.yaml
 K3D_CONFIG          := infra/k3d/cluster.yaml
+NAMESPACE           := wattlake
 
-.PHONY: check-kubeconfig cluster-up cluster-down cluster-stop cluster-start
+SEAWEEDFS_REPO_URL  := https://seaweedfs.github.io/seaweedfs/helm
+SEAWEEDFS_CHART     := seaweedfs/seaweedfs
+SEAWEEDFS_VERSION   := 4.52.0
+SEAWEEDFS_VALUES    := infra/seaweedfs/values.yaml
+
+.PHONY: check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
+	helm-repos seaweedfs-up seaweedfs-down
 
 ## Abort unless KUBECONFIG points to the personal kubeconfig file.
 check-kubeconfig:
@@ -11,6 +18,16 @@ check-kubeconfig:
 		echo "KUBECONFIG must be $(EXPECTED_KUBECONFIG), got '$$KUBECONFIG'. Is direnv enabled?"; \
 		exit 1; \
 	fi
+
+## Abort unless Helm uses the project-isolated config, cache and data directories.
+check-helm-env:
+	@for var in HELM_CONFIG_HOME HELM_CACHE_HOME HELM_DATA_HOME; do \
+		value=$$(helm env $$var); \
+		case "$$value" in \
+			*/helm-perso) ;; \
+			*) echo "$$var must end with /helm-perso, got '$$value'. Is direnv enabled?"; exit 1 ;; \
+		esac; \
+	done
 
 ## Create the local k3d cluster (no-op if it already exists).
 cluster-up: check-kubeconfig
@@ -32,3 +49,22 @@ cluster-stop: check-kubeconfig
 ## Restart a previously stopped cluster.
 cluster-start: check-kubeconfig
 	k3d cluster start $(CLUSTER_NAME)
+
+## Register the Helm chart repositories used by the stack.
+helm-repos: check-helm-env
+	helm repo add seaweedfs $(SEAWEEDFS_REPO_URL) --force-update
+	helm repo update seaweedfs
+
+## Install or upgrade SeaweedFS (S3 gateway on port 8333, bucket "warehouse").
+seaweedfs-up: check-kubeconfig check-helm-env helm-repos
+	helm upgrade --install seaweedfs $(SEAWEEDFS_CHART) \
+		--version $(SEAWEEDFS_VERSION) \
+		--kube-context $(KUBE_CONTEXT) \
+		--namespace $(NAMESPACE) --create-namespace \
+		--values $(SEAWEEDFS_VALUES) \
+		--wait --timeout 5m
+	kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) get pods
+
+## Uninstall SeaweedFS. PVCs are kept: delete them by hand to wipe the data.
+seaweedfs-down: check-kubeconfig check-helm-env
+	helm uninstall seaweedfs --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)

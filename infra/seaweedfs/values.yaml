@@ -1,0 +1,91 @@
+# SeaweedFS object storage for the local WattLake cluster.
+# Chart: seaweedfs/seaweedfs 4.52.0 (version pinned in the Makefile).
+# Usage: make seaweedfs-up / make seaweedfs-down
+
+image:
+  tag: "4.52"
+
+global:
+  seaweedfs:
+    # The chart's pod read/write ClusterRole is a migration leftover that no
+    # SeaweedFS component uses (see the chart's networkpolicy.yaml): skip it.
+    createClusterRole: false
+
+master:
+  replicas: 1
+  # Single volume server: no replication ("000").
+  defaultReplication: "000"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # Raft state on a PVC so it follows the pod if it is rescheduled.
+  data:
+    type: persistentVolumeClaim
+    size: 1Gi
+    storageClass: local-path
+  logs:
+    type: emptyDir
+
+volume:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  dataDirs:
+    - name: data1
+      type: persistentVolumeClaim
+      size: 10Gi
+      storageClass: local-path
+      maxVolumes: 0
+
+filer:
+  replicas: 1
+  # Sized for the filer plus the embedded S3 gateway.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # Filer metadata store (leveldb) on a PVC.
+  data:
+    type: persistentVolumeClaim
+    size: 1Gi
+    storageClass: local-path
+  logs:
+    type: emptyDir
+  # S3 gateway embedded in the filer pod (port 8333): one pod less than the standalone gateway.
+  s3:
+    enabled: true
+    enableAuth: true
+    createBuckets:
+      - name: warehouse
+    # Short-lived Job that runs "weed shell" to create the buckets.
+    createBucketsHook:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+
+s3:
+  # The chart reads S3 credentials from this top-level key, even when the gateway runs in the filer.
+  # DEVELOPMENT ONLY: fake placeholder credentials, replaced by real secrets at step 4.4.
+  credentials:
+    admin:
+      accessKey: wattlake-dev-admin-access-key
+      secretKey: wattlake-dev-admin-secret-key
+    read:
+      accessKey: wattlake-dev-read-access-key
+      secretKey: wattlake-dev-read-secret-key
