@@ -1,0 +1,3 @@
+# Screenshot capture of the stack web interfaces (make screenshots).
+# 1.64.0 (2026-10-13): latest release published at least two weeks before pinning.
+playwright==1.64.0

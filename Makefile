@@ -20,7 +20,12 @@ TRINO_VERSION       := 1.45.0
 TRINO_VALUES        := infra/trino/values.yaml
 
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
-	helm-repos seaweedfs-up seaweedfs-down nessie-up nessie-down trino-up trino-down smoke-test
+	helm-repos seaweedfs-up seaweedfs-down nessie-up nessie-down trino-up trino-down smoke-test \
+	screenshots
+
+VENV                := .venv
+# Browsers downloaded by Playwright stay inside the project virtual environment.
+export PLAYWRIGHT_BROWSERS_PATH := $(CURDIR)/$(VENV)/ms-playwright
 
 ## Create the cluster and deploy the whole stack. Sequential sub-makes keep the
 ## order (cluster, storage, catalog, engine) even when make runs with -j.
@@ -123,3 +128,14 @@ trino-down: check-kubeconfig check-helm-env
 ## End-to-end check: Trino writes an Iceberg table to SeaweedFS and Nessie records the commit.
 smoke-test: check-kubeconfig
 	bash tests/smoke/run.sh
+
+## Project virtual environment with Playwright and its headless Chromium (never installed globally).
+$(VENV)/bin/playwright: tools/screenshots/requirements.txt
+	python3 -m venv $(VENV)
+	$(VENV)/bin/pip install --requirement tools/screenshots/requirements.txt
+	$(VENV)/bin/playwright install --only-shell chromium
+	touch $@
+
+## Run the smoke test, then capture the Nessie and Trino web interfaces into docs/images/.
+screenshots: check-kubeconfig $(VENV)/bin/playwright
+	$(VENV)/bin/python tools/screenshots/capture.py
