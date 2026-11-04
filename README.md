@@ -39,8 +39,8 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 
 **Étape 1 : le socle**
 - [x] Création du dépôt et de la documentation
-- [ ] Cluster k3d et déploiement de SeaweedFS, Nessie et Trino via Helm
-- [ ] Première table Iceberg créée depuis Trino et visible dans Nessie
+- [x] Cluster k3d et déploiement de SeaweedFS, Nessie et Trino via Helm
+- [x] Première table Iceberg créée depuis Trino et visible dans Nessie
 - [ ] DAG Airflow chargeant l'historique dans la couche bronze
 
 **Étape 2 : les transformations**
@@ -48,7 +48,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 - [ ] Tests de qualité des données dans dbt
 
 **Étape 3 : DataOps**
-- [ ] CI GitLab : lint, tests Python, tests dbt, construction des images
+- [ ] Intégration continue (choix documenté dans l'ADR 003) : lint, tests Python, tests dbt, construction des images
 - [ ] Déploiement GitOps avec Argo CD
 - [ ] Write-Audit-Publish : écriture sur une branche Nessie, contrôles qualité, puis fusion dans `main`
 - [ ] Identifiants déplacés dans des Secrets Kubernetes
@@ -59,9 +59,68 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 
 ## Démarrer
 
-Les instructions d'installation (`make up` / `make down`) seront ajoutées avec l'étape 1.
+### Prérequis
 
-Prérequis prévus : Docker, k3d, kubectl et Helm.
+| Outil | Version testée | Rôle |
+| --- | --- | --- |
+| Docker | 28.1 | Fait tourner les nœuds du cluster k3d |
+| k3d | 5.9 (k3s 1.35.5) | Crée le cluster Kubernetes local |
+| kubectl | 1.35 | Pilote le cluster |
+| Helm | 3.12 | Déploie les composants de la stack |
+| Python | 3.12 | Utilisé par le smoke test |
+| direnv | 2.32 | Charge les variables d'environnement du projet (optionnel) |
+
+Prévoir 8 Go de mémoire libre : les limites mémoire des composants atteignent environ 7 Go, dont 5 Go pour Trino.
+
+### Isoler l'environnement du projet
+
+Le projet utilise son propre fichier kubeconfig et sa propre configuration Helm, pour ne jamais toucher à un autre cluster. Le Makefile vérifie ces variables et refuse de s'exécuter si elles ne sont pas définies.
+
+```bash
+cp .envrc.example .envrc
+direnv allow
+```
+
+Sans direnv, exporter à la main les quatre variables de [`.envrc.example`](.envrc.example) dans le terminal.
+
+### Lancer la stack
+
+```bash
+make cluster-up      # cluster k3d : 1 serveur, 1 agent
+make seaweedfs-up    # stockage objet S3, bucket warehouse
+make nessie-up       # catalogue Nessie
+make trino-up        # Trino, catalogue iceberg branché sur Nessie et SeaweedFS
+make smoke-test      # test de bout en bout
+```
+
+Chaque cible `*-up` peut être relancée : elle installe le composant ou le met à jour.
+
+Le smoke test crée une table Iceberg depuis Trino, la relit, vérifie que ses fichiers sont dans SeaweedFS et que son commit apparaît dans Nessie. Il se termine par :
+
+```
+==> Smoke test passed
+```
+
+### Interroger la stack
+
+```bash
+# CLI Trino, depuis le pod coordinator
+kubectl --context k3d-wattlake -n wattlake exec -it deploy/trino-coordinator -- trino
+
+# Interfaces web, chacune dans son terminal
+kubectl --context k3d-wattlake -n wattlake port-forward svc/trino 8080:8080     # Trino : http://127.0.0.1:8080
+kubectl --context k3d-wattlake -n wattlake port-forward svc/nessie 19120:19120  # Nessie : http://127.0.0.1:19120
+```
+
+### Mettre en pause et supprimer
+
+```bash
+make cluster-stop    # arrête les conteneurs du cluster, les données sont conservées
+make cluster-start   # redémarre le cluster
+make cluster-down    # supprime le cluster et toutes ses données
+```
+
+Nessie conserve pour l'instant son historique en mémoire : tout redémarrage de son pod efface les commits, alors que les fichiers restent dans SeaweedFS. Un stockage persistant est prévu dans la feuille de route.
 
 ## Choix techniques
 

@@ -1,0 +1,12 @@
+# Project-scoped environment, loaded by direnv when entering the repository.
+# Usage: cp .envrc.example .envrc && direnv allow
+# The Makefile checks these values and refuses to run if they are not set.
+
+# Dedicated kubeconfig file: k3d writes the k3d-wattlake context here, never into ~/.kube/config.
+export KUBECONFIG=$HOME/.kube/perso.yaml
+# Helm settings (registered repositories) kept apart from any other Helm usage.
+export HELM_CONFIG_HOME=$HOME/.config/helm-perso
+# Helm cache (downloaded charts and repository indexes) kept apart as well.
+export HELM_CACHE_HOME=$HOME/.cache/helm-perso
+# Helm data (plugins) kept apart as well.
+export HELM_DATA_HOME=$HOME/.local/share/helm-perso
