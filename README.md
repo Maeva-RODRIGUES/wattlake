@@ -86,14 +86,11 @@ Sans direnv, exporter à la main les quatre variables de [`.envrc.example`](.env
 ### Lancer la stack
 
 ```bash
-make cluster-up      # cluster k3d : 1 serveur, 1 agent
-make seaweedfs-up    # stockage objet S3, bucket warehouse
-make nessie-up       # catalogue Nessie
-make trino-up        # Trino, catalogue iceberg branché sur Nessie et SeaweedFS
+make up              # cluster k3d, puis SeaweedFS, Nessie et Trino
 make smoke-test      # test de bout en bout
 ```
 
-Chaque cible `*-up` peut être relancée : elle installe le composant ou le met à jour.
+`make up` peut être relancé : il ne recrée pas le cluster existant et met à jour les composants. Pour un seul composant, utiliser sa cible : `make cluster-up`, `make seaweedfs-up`, `make nessie-up` ou `make trino-up`.
 
 Le smoke test crée une table Iceberg depuis Trino, la relit, vérifie que ses fichiers sont dans SeaweedFS et que son commit apparaît dans Nessie. Il se termine par :
 
@@ -117,7 +114,7 @@ kubectl --context k3d-wattlake -n wattlake port-forward svc/nessie 19120:19120  
 ```bash
 make cluster-stop    # arrête les conteneurs du cluster, les données sont conservées
 make cluster-start   # redémarre le cluster
-make cluster-down    # supprime le cluster et toutes ses données
+make down            # supprime le cluster et toutes ses données (alias de cluster-down)
 ```
 
 Nessie conserve pour l'instant son historique en mémoire : tout redémarrage de son pod efface les commits, alors que les fichiers restent dans SeaweedFS. Un stockage persistant est prévu dans la feuille de route.

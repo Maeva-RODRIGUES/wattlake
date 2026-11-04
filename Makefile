@@ -19,8 +19,19 @@ TRINO_CHART         := trino/trino
 TRINO_VERSION       := 1.45.0
 TRINO_VALUES        := infra/trino/values.yaml
 
-.PHONY: check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
+.PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	helm-repos seaweedfs-up seaweedfs-down nessie-up nessie-down trino-up trino-down smoke-test
+
+## Create the cluster and deploy the whole stack. Sequential sub-makes keep the
+## order (cluster, storage, catalog, engine) even when make runs with -j.
+up: check-kubeconfig check-helm-env
+	$(MAKE) cluster-up
+	$(MAKE) seaweedfs-up
+	$(MAKE) nessie-up
+	$(MAKE) trino-up
+
+## Delete the cluster and all its data. Use cluster-stop to pause instead.
+down: cluster-down
 
 ## Abort unless KUBECONFIG points to the personal kubeconfig file.
 check-kubeconfig:
