@@ -20,7 +20,7 @@ TRINO_VERSION       := 1.45.0
 TRINO_VALUES        := infra/trino/values.yaml
 
 .PHONY: check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
-	helm-repos seaweedfs-up seaweedfs-down nessie-up nessie-down trino-up trino-down
+	helm-repos seaweedfs-up seaweedfs-down nessie-up nessie-down trino-up trino-down smoke-test
 
 ## Abort unless KUBECONFIG points to the personal kubeconfig file.
 check-kubeconfig:
@@ -108,3 +108,7 @@ trino-up: check-kubeconfig check-helm-env helm-repos
 ## Uninstall Trino. Tables stay in Nessie and SeaweedFS.
 trino-down: check-kubeconfig check-helm-env
 	helm uninstall trino --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)
+
+## End-to-end check: Trino writes an Iceberg table to SeaweedFS and Nessie records the commit.
+smoke-test: check-kubeconfig
+	bash tests/smoke/run.sh
