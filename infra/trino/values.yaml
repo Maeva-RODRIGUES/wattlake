@@ -1,0 +1,69 @@
+# Trino query engine for the local WattLake cluster.
+# Chart: trino/trino 1.45.0 (version pinned in the Makefile).
+# Usage: make trino-up / make trino-down
+
+image:
+  tag: "484"
+
+server:
+  # One coordinator (planning) and one worker (execution).
+  workers: 1
+  node:
+    environment: dev
+  config:
+    query:
+      # Cluster-wide limit: a single worker with 1GB per node.
+      maxMemory: "1GB"
+
+coordinator:
+  jvm:
+    maxHeapSize: "1536M"
+  config:
+    query:
+      # Must stay below heap minus headroom (30% of heap by default).
+      maxMemoryPerNode: "512MB"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+worker:
+  jvm:
+    maxHeapSize: "2G"
+  config:
+    query:
+      # 1GB + 30% headroom of a 2G heap = 1.6G, below the heap size.
+      maxMemoryPerNode: "1GB"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 3Gi
+    limits:
+      cpu: "2"
+      memory: 3Gi
+
+catalogs:
+  # Demo catalog with generated data, handy for tests without any dependency.
+  tpch: |
+    connector.name=tpch
+    tpch.splits-per-node=4
+  # Second demo catalog from the chart defaults: not needed.
+  tpcds: null
+  # Iceberg tables: Nessie native API as catalog (see ADR 002), SeaweedFS as storage.
+  # DEVELOPMENT ONLY: placeholder S3 credentials from infra/seaweedfs/values.yaml,
+  # moved to a Kubernetes Secret at step 4.4.
+  iceberg: |
+    connector.name=iceberg
+    iceberg.catalog.type=nessie
+    iceberg.nessie-catalog.uri=http://nessie:19120/api/v2
+    iceberg.nessie-catalog.ref=main
+    iceberg.nessie-catalog.default-warehouse-dir=s3://warehouse
+    fs.native-s3.enabled=true
+    s3.endpoint=http://seaweedfs-s3:8333
+    s3.region=us-east-1
+    s3.path-style-access=true
+    s3.aws-access-key=wattlake-dev-admin-access-key
+    s3.aws-secret-key=wattlake-dev-admin-secret-key

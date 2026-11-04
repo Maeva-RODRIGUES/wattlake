@@ -14,8 +14,13 @@ NESSIE_CHART        := nessie/nessie
 NESSIE_VERSION      := 0.109.0
 NESSIE_VALUES       := infra/nessie/values.yaml
 
+TRINO_REPO_URL      := https://trinodb.github.io/charts
+TRINO_CHART         := trino/trino
+TRINO_VERSION       := 1.45.0
+TRINO_VALUES        := infra/trino/values.yaml
+
 .PHONY: check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
-	helm-repos seaweedfs-up seaweedfs-down nessie-up nessie-down
+	helm-repos seaweedfs-up seaweedfs-down nessie-up nessie-down trino-up trino-down
 
 ## Abort unless KUBECONFIG points to the personal kubeconfig file.
 check-kubeconfig:
@@ -59,7 +64,8 @@ cluster-start: check-kubeconfig
 helm-repos: check-helm-env
 	helm repo add seaweedfs $(SEAWEEDFS_REPO_URL) --force-update
 	helm repo add nessie $(NESSIE_REPO_URL) --force-update
-	helm repo update seaweedfs nessie
+	helm repo add trino $(TRINO_REPO_URL) --force-update
+	helm repo update seaweedfs nessie trino
 
 ## Install or upgrade SeaweedFS (S3 gateway on port 8333, bucket "warehouse").
 seaweedfs-up: check-kubeconfig check-helm-env helm-repos
@@ -88,3 +94,17 @@ nessie-up: check-kubeconfig check-helm-env helm-repos
 ## Uninstall Nessie. With the in-memory store, all commits are lost.
 nessie-down: check-kubeconfig check-helm-env
 	helm uninstall nessie --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)
+
+## Install or upgrade Trino (1 coordinator + 1 worker, Iceberg catalog on Nessie and SeaweedFS).
+trino-up: check-kubeconfig check-helm-env helm-repos
+	helm upgrade --install trino $(TRINO_CHART) \
+		--version $(TRINO_VERSION) \
+		--kube-context $(KUBE_CONTEXT) \
+		--namespace $(NAMESPACE) --create-namespace \
+		--values $(TRINO_VALUES) \
+		--wait --timeout 5m
+	kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) get pods
+
+## Uninstall Trino. Tables stay in Nessie and SeaweedFS.
+trino-down: check-kubeconfig check-helm-env
+	helm uninstall trino --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)
