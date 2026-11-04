@@ -9,8 +9,13 @@ SEAWEEDFS_CHART     := seaweedfs/seaweedfs
 SEAWEEDFS_VERSION   := 4.52.0
 SEAWEEDFS_VALUES    := infra/seaweedfs/values.yaml
 
+NESSIE_REPO_URL     := https://charts.projectnessie.org
+NESSIE_CHART        := nessie/nessie
+NESSIE_VERSION      := 0.109.0
+NESSIE_VALUES       := infra/nessie/values.yaml
+
 .PHONY: check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
-	helm-repos seaweedfs-up seaweedfs-down
+	helm-repos seaweedfs-up seaweedfs-down nessie-up nessie-down
 
 ## Abort unless KUBECONFIG points to the personal kubeconfig file.
 check-kubeconfig:
@@ -53,7 +58,8 @@ cluster-start: check-kubeconfig
 ## Register the Helm chart repositories used by the stack.
 helm-repos: check-helm-env
 	helm repo add seaweedfs $(SEAWEEDFS_REPO_URL) --force-update
-	helm repo update seaweedfs
+	helm repo add nessie $(NESSIE_REPO_URL) --force-update
+	helm repo update seaweedfs nessie
 
 ## Install or upgrade SeaweedFS (S3 gateway on port 8333, bucket "warehouse").
 seaweedfs-up: check-kubeconfig check-helm-env helm-repos
@@ -68,3 +74,17 @@ seaweedfs-up: check-kubeconfig check-helm-env helm-repos
 ## Uninstall SeaweedFS. PVCs are kept: delete them by hand to wipe the data.
 seaweedfs-down: check-kubeconfig check-helm-env
 	helm uninstall seaweedfs --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)
+
+## Install or upgrade Nessie (API on port 19120, in-memory version store).
+nessie-up: check-kubeconfig check-helm-env helm-repos
+	helm upgrade --install nessie $(NESSIE_CHART) \
+		--version $(NESSIE_VERSION) \
+		--kube-context $(KUBE_CONTEXT) \
+		--namespace $(NAMESPACE) --create-namespace \
+		--values $(NESSIE_VALUES) \
+		--wait --timeout 5m
+	kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) get pods
+
+## Uninstall Nessie. With the in-memory store, all commits are lost.
+nessie-down: check-kubeconfig check-helm-env
+	helm uninstall nessie --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)

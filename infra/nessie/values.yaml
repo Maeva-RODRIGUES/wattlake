@@ -1,0 +1,27 @@
+# Nessie catalog for the local WattLake cluster.
+# Chart: nessie/nessie 0.109.0 (version pinned in the Makefile).
+# Usage: make nessie-up / make nessie-down
+
+image:
+  # Pinned explicitly instead of relying on the chart-version default.
+  tag: "0.109.0"
+
+replicaCount: 1
+
+# Commits and references live in the pod's memory: they are lost on restart.
+# Acceptable for the first iterations; PostgreSQL replaces it at step 4.5.
+versionStoreType: IN_MEMORY
+
+catalog:
+  # Only the native Nessie API (v2) for now. Whether to expose the Iceberg
+  # REST catalog is decided in ADR 002, before Trino is wired in.
+  enabled: false
+
+# Quarkus JVM: sized for a single developer workload.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
