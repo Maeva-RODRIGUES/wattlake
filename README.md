@@ -10,6 +10,18 @@ WattLake est un projet d'apprentissage : je l'ai lancé pour pratiquer, de bout 
 
 J'ai choisi les données de production et de consommation électrique parce qu'elles réunissent deux usages classiques : un historique à charger en batch, et des mises à jour fréquentes qui se prêtent à un flux temps réel. Elles permettent aussi de répondre à des questions concrètes, comme l'évolution de la part des énergies renouvelables dans le mix.
 
+## Aperçu
+
+![Historique des commits de la branche main dans l'interface de Nessie](docs/images/nessie-commits.png)
+
+*Historique de la branche `main` dans Nessie après un smoke test. Chaque opération lancée depuis Trino (suppression, création du namespace, création de la table, insertion) devient un commit, comme dans Git. C'est ce versionnement qui permettra de revenir à un état antérieur et de travailler sur des branches isolées avant de publier.*
+
+![Détail de la requête de contrôle du smoke test dans l'interface de Trino](docs/images/trino-query.png)
+
+*Requête de contrôle du smoke test dans l'interface de Trino : elle relit la table Iceberg et appelle `fail()` si le contenu n'est pas celui attendu. Ses deux étapes terminées montrent que Trino lit bien les données via le catalogue Nessie et le stockage SeaweedFS.*
+
+Ces captures sont générées par `make screenshots`.
+
 ## Architecture
 
 ```mermaid
@@ -108,6 +120,14 @@ kubectl --context k3d-wattlake -n wattlake exec -it deploy/trino-coordinator -- 
 kubectl --context k3d-wattlake -n wattlake port-forward svc/trino 8080:8080     # Trino : http://127.0.0.1:8080
 kubectl --context k3d-wattlake -n wattlake port-forward svc/nessie 19120:19120  # Nessie : http://127.0.0.1:19120
 ```
+
+### Régénérer les captures
+
+```bash
+make screenshots     # smoke test, puis captures de Nessie et Trino dans docs/images/
+```
+
+Au premier lancement, la cible crée un environnement virtuel `.venv` dans le projet et y installe Playwright et un Chromium headless (environ 450 Mo). Rien n'est installé en dehors du projet : supprimer `.venv` suffit à tout retirer.
 
 ### Mettre en pause et supprimer
 
