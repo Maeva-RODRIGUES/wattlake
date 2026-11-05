@@ -60,7 +60,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 - [ ] Tests de qualité des données dans dbt
 
 **Étape 3 : DataOps**
-- [ ] Intégration continue (choix documenté dans l'ADR 004) : lint, tests Python, tests dbt, construction des images
+- [ ] Intégration continue (choix documenté dans l'ADR 005) : lint, tests Python, tests dbt, construction des images
 - [ ] Déploiement GitOps avec Argo CD
 - [ ] Write-Audit-Publish : écriture sur une branche Nessie, contrôles qualité, puis fusion dans `main`
 - [ ] Identifiants déplacés dans des Secrets Kubernetes
@@ -147,6 +147,7 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 001 : choix du stockage objet](docs/adr/001-stockage-objet.md), ou pourquoi SeaweedFS plutôt que MinIO.
 - [ADR 002 : API utilisée pour accéder au catalogue Nessie](docs/adr/002-api-catalogue-nessie.md), ou pourquoi l'API native de Nessie plutôt que son catalogue REST Iceberg.
 - [ADR 003 : base de métadonnées d'Airflow](docs/adr/003-base-metadonnees-airflow.md), ou pourquoi une image PostgreSQL officielle plutôt que celle embarquée par le chart.
+- [ADR 004 : catalogue REST Iceberg pour l'ingestion](docs/adr/004-catalogue-rest-ingestion.md), qui remplace l'ADR 002 : pourquoi PyIceberg écrit par le catalogue REST de Nessie avec ses propres clés S3, pendant que Trino reste sur l'API native.
 
 ## Ce que je ferais en production
 

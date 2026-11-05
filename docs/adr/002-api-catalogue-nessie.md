@@ -1,6 +1,6 @@
 # ADR 002 : API utilisée pour accéder au catalogue Nessie
 
-- **Statut** : accepté
+- **Statut** : remplacé par l'[ADR 004](004-catalogue-rest-ingestion.md)
 - **Date** : novembre 2026
 
 ## Contexte
