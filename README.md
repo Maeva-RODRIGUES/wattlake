@@ -75,7 +75,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 
 | Outil | Version testée | Rôle |
 | --- | --- | --- |
-| Docker | 28.1 | Fait tourner les nœuds du cluster k3d |
+| Docker | 28.1 | Fait tourner les nœuds du cluster k3d et construit l'image Airflow |
 | k3d | 5.9 (k3s 1.35.5) | Crée le cluster Kubernetes local |
 | kubectl | 1.35 | Pilote le cluster |
 | Helm | 3.12 | Déploie les composants de la stack |
@@ -99,7 +99,7 @@ Sans direnv, exporter à la main les quatre variables de [`.envrc.example`](.env
 ### Lancer la stack
 
 ```bash
-make up                 # cluster k3d, puis SeaweedFS, PostgreSQL, Nessie, Trino et Airflow
+make up                 # cluster k3d, puis SeaweedFS, PostgreSQL, Nessie, Trino et Airflow (image construite et importée dans k3d)
 make smoke-test         # test de bout en bout
 make rest-catalog-test  # écriture PyIceberg par le catalogue REST, lue depuis Trino
 ```

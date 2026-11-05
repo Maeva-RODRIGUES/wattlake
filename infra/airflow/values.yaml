@@ -1,13 +1,15 @@
 # Values for the apache-airflow/airflow chart 1.22.0 (Airflow 3.2.2).
 # Usage: make airflow-up / make airflow-down
 
-# Pinned explicitly instead of relying on the chart-version default.
-# airflowVersion drives the chart's version-specific templates and must match the tag.
+# airflowVersion drives the chart's version-specific templates: it must match
+# the Airflow version of the image (apache/airflow:3.2.2 in ingestion/Dockerfile).
 airflowVersion: "3.2.2"
 images:
   airflow:
-    repository: apache/airflow
-    tag: "3.2.2"
+    # Custom image built from ingestion/Dockerfile. Repository and tag are set by
+    # "make airflow-up" from AIRFLOW_IMAGE_REPO and AIRFLOW_IMAGE_TAG in the Makefile.
+    # The image is loaded into the k3d nodes, not pulled from a registry.
+    pullPolicy: IfNotPresent
 
 # Tasks run as subprocesses of the scheduler: no Celery workers, no Redis broker.
 executor: LocalExecutor

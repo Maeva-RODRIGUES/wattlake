@@ -26,6 +26,11 @@ AIRFLOW_REPO_URL    := https://airflow.apache.org
 AIRFLOW_CHART       := apache-airflow/airflow
 AIRFLOW_VERSION     := 1.22.0
 AIRFLOW_VALUES      := infra/airflow/values.yaml
+# Custom Airflow image (ingestion/Dockerfile). Bump the tag whenever the image
+# changes: with the same tag, Helm sees no change and keeps the running pods.
+AIRFLOW_IMAGE_REPO  := wattlake-airflow
+AIRFLOW_IMAGE_TAG   := 0.1.0
+AIRFLOW_IMAGE       := $(AIRFLOW_IMAGE_REPO):$(AIRFLOW_IMAGE_TAG)
 
 INGESTION_DIR       := ingestion
 INGESTION_VENV      := $(INGESTION_DIR)/.venv
@@ -34,7 +39,8 @@ INGESTION_PYTHON    := 3.13.13
 
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	helm-repos seaweedfs-up seaweedfs-down postgres-up postgres-down nessie-up nessie-down \
-	trino-up trino-down airflow-up airflow-down smoke-test rest-catalog-test screenshots ingestion-test
+	trino-up trino-down airflow-image airflow-image-import airflow-up airflow-down smoke-test \
+	rest-catalog-test screenshots ingestion-test
 
 VENV                := .venv
 # Browsers downloaded by Playwright stay inside the project virtual environment.
@@ -158,14 +164,26 @@ trino-down: check-kubeconfig check-helm-env
 	helm uninstall trino --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)
 
 ## Install or upgrade Airflow (LocalExecutor, metadata in the PostgreSQL from postgres-up).
-airflow-up: check-kubeconfig check-helm-env helm-repos
+## The custom image is built and loaded into k3d first, so that the pods never
+## wait for an image missing from the nodes.
+airflow-up: check-kubeconfig check-helm-env helm-repos airflow-image-import
 	helm upgrade --install airflow $(AIRFLOW_CHART) \
 		--version $(AIRFLOW_VERSION) \
 		--kube-context $(KUBE_CONTEXT) \
 		--namespace $(NAMESPACE) --create-namespace \
 		--values $(AIRFLOW_VALUES) \
+		--set images.airflow.repository=$(AIRFLOW_IMAGE_REPO) \
+		--set images.airflow.tag=$(AIRFLOW_IMAGE_TAG) \
 		--wait --timeout 10m
 	kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) get pods
+
+## Build the custom Airflow image (official image, ingestion package, DAGs).
+airflow-image:
+	docker build --tag $(AIRFLOW_IMAGE) $(INGESTION_DIR)
+
+## Load the custom Airflow image into the k3d nodes (no registry involved).
+airflow-image-import: check-kubeconfig airflow-image
+	k3d image import $(AIRFLOW_IMAGE) --cluster $(CLUSTER_NAME)
 
 ## Uninstall Airflow. Its metadata stays in PostgreSQL.
 airflow-down: check-kubeconfig check-helm-env
