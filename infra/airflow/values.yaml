@@ -1,0 +1,121 @@
+# Values for the apache-airflow/airflow chart 1.22.0 (Airflow 3.2.2).
+# Usage: make airflow-up / make airflow-down
+
+# Pinned explicitly instead of relying on the chart-version default.
+# airflowVersion drives the chart's version-specific templates and must match the tag.
+airflowVersion: "3.2.2"
+images:
+  airflow:
+    repository: apache/airflow
+    tag: "3.2.2"
+
+# Tasks run as subprocesses of the scheduler: no Celery workers, no Redis broker.
+executor: LocalExecutor
+
+# Sized for a single developer workload. Init containers reuse their component's
+# resources; the log-groomer sidecars only delete old log files.
+scheduler:
+  # Also runs the tasks with LocalExecutor, hence the largest limit.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+  logGroomerSidecar:
+    resources: &logGroomerResources
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+apiServer:
+  # REST API and web interface: 4 uvicorn worker processes by default.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1536Mi
+dagProcessor:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  logGroomerSidecar:
+    resources: *logGroomerResources
+triggerer:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  logGroomerSidecar:
+    resources: *logGroomerResources
+  persistence:
+    size: 1Gi
+
+# The metadata database is the PostgreSQL instance from infra/postgres
+# (see docs/adr/003-base-metadonnees-airflow.md), not the chart's bundled one.
+postgresql:
+  enabled: false
+redis:
+  enabled: false
+# Metrics come later with the stack monitoring.
+statsd:
+  enabled: false
+
+# Task logs are kept on small volumes (the chart default is 100Gi each).
+# With LocalExecutor the scheduler runs the tasks, and the chart sizes its log
+# volume from the worker settings, hence "workers.celery" below.
+workers:
+  celery:
+    persistence:
+      size: 1Gi
+
+data:
+  metadataConnection:
+    user: airflow
+    # DEVELOPMENT ONLY: fake placeholder password, replaced by a real secret at step 4.4.
+    pass: airflow-dev
+    protocol: postgresql
+    host: postgres.wattlake.svc.cluster.local
+    port: 5432
+    db: airflow
+    sslmode: disable
+
+# DEVELOPMENT ONLY: fake placeholder keys, replaced by real secrets at step 4.4.
+# Fixed values keep "helm upgrade" idempotent: generated keys would change on
+# every upgrade, restart the pods and invalidate sessions and tokens.
+# The Fernet key encrypts connections stored in the database (32 bytes, url-safe base64).
+fernetKey: d2F0dGxha2UtZGV2LWZlcm5ldC1rZXktMzItYnl0ZXM=
+apiSecretKey: wattlake-dev-api-secret-key
+jwtSecret: wattlake-dev-jwt-secret
+
+# Run the migration and user creation as regular Jobs instead of post-install
+# hooks: with "helm --wait", pods wait for the migration while the hooks only
+# start once the wait is over, so the release would never become ready.
+# One-off Jobs running the Airflow CLI: they only run at install and upgrade time.
+migrateDatabaseJob:
+  useHelmHooks: false
+  resources: &jobResources
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+createUserJob:
+  useHelmHooks: false
+  resources: *jobResources
+  defaultUser:
+    # DEVELOPMENT ONLY: fake placeholder password for the local web interface.
+    password: admin-dev

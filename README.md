@@ -82,7 +82,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | Python | 3.12 | Utilisé par le smoke test |
 | direnv | 2.32 | Charge les variables d'environnement du projet (optionnel) |
 
-Prévoir 8 Go de mémoire libre : les limites mémoire des composants atteignent environ 7 Go, dont 5 Go pour Trino.
+Prévoir 16 Go de mémoire libre : les limites mémoire des composants atteignent environ 13 Go, dont 5 Go pour Trino et 5,5 Go pour Airflow, et les Jobs d'installation d'Airflow ajoutent temporairement 2 Go.
 
 ### Isoler l'environnement du projet
 

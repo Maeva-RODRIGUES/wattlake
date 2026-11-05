@@ -21,22 +21,28 @@ TRINO_VALUES        := infra/trino/values.yaml
 
 POSTGRES_MANIFESTS  := infra/postgres
 
+AIRFLOW_REPO_URL    := https://airflow.apache.org
+AIRFLOW_CHART       := apache-airflow/airflow
+AIRFLOW_VERSION     := 1.22.0
+AIRFLOW_VALUES      := infra/airflow/values.yaml
+
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	helm-repos seaweedfs-up seaweedfs-down postgres-up postgres-down nessie-up nessie-down \
-	trino-up trino-down smoke-test screenshots
+	trino-up trino-down airflow-up airflow-down smoke-test screenshots
 
 VENV                := .venv
 # Browsers downloaded by Playwright stay inside the project virtual environment.
 export PLAYWRIGHT_BROWSERS_PATH := $(CURDIR)/$(VENV)/ms-playwright
 
 ## Create the cluster and deploy the whole stack. Sequential sub-makes keep the
-## order (cluster, storage, database, catalog, engine) even when make runs with -j.
+## order (cluster, storage, database, catalog, engine, orchestrator) even when make runs with -j.
 up: check-kubeconfig check-helm-env
 	$(MAKE) cluster-up
 	$(MAKE) seaweedfs-up
 	$(MAKE) postgres-up
 	$(MAKE) nessie-up
 	$(MAKE) trino-up
+	$(MAKE) airflow-up
 
 ## Delete the cluster and all its data. Use cluster-stop to pause instead.
 down: cluster-down
@@ -84,7 +90,8 @@ helm-repos: check-helm-env
 	helm repo add seaweedfs $(SEAWEEDFS_REPO_URL) --force-update
 	helm repo add nessie $(NESSIE_REPO_URL) --force-update
 	helm repo add trino $(TRINO_REPO_URL) --force-update
-	helm repo update seaweedfs nessie trino
+	helm repo add apache-airflow $(AIRFLOW_REPO_URL) --force-update
+	helm repo update seaweedfs nessie trino apache-airflow
 
 ## Install or upgrade SeaweedFS (S3 gateway on port 8333, bucket "warehouse").
 seaweedfs-up: check-kubeconfig check-helm-env helm-repos
@@ -139,6 +146,20 @@ trino-up: check-kubeconfig check-helm-env helm-repos
 ## Uninstall Trino. Tables stay in Nessie and SeaweedFS.
 trino-down: check-kubeconfig check-helm-env
 	helm uninstall trino --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)
+
+## Install or upgrade Airflow (LocalExecutor, metadata in the PostgreSQL from postgres-up).
+airflow-up: check-kubeconfig check-helm-env helm-repos
+	helm upgrade --install airflow $(AIRFLOW_CHART) \
+		--version $(AIRFLOW_VERSION) \
+		--kube-context $(KUBE_CONTEXT) \
+		--namespace $(NAMESPACE) --create-namespace \
+		--values $(AIRFLOW_VALUES) \
+		--wait --timeout 10m
+	kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) get pods
+
+## Uninstall Airflow. Its metadata stays in PostgreSQL.
+airflow-down: check-kubeconfig check-helm-env
+	helm uninstall airflow --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)
 
 ## End-to-end check: Trino writes an Iceberg table to SeaweedFS and Nessie records the commit.
 smoke-test: check-kubeconfig
