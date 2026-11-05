@@ -13,6 +13,7 @@ NESSIE_REPO_URL     := https://charts.projectnessie.org
 NESSIE_CHART        := nessie/nessie
 NESSIE_VERSION      := 0.109.0
 NESSIE_VALUES       := infra/nessie/values.yaml
+NESSIE_S3_SECRET    := infra/nessie/s3-credentials.yaml
 
 TRINO_REPO_URL      := https://trinodb.github.io/charts
 TRINO_CHART         := trino/trino
@@ -33,7 +34,7 @@ INGESTION_PYTHON    := 3.13.13
 
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	helm-repos seaweedfs-up seaweedfs-down postgres-up postgres-down nessie-up nessie-down \
-	trino-up trino-down airflow-up airflow-down smoke-test screenshots ingestion-test
+	trino-up trino-down airflow-up airflow-down smoke-test rest-catalog-test screenshots ingestion-test
 
 VENV                := .venv
 # Browsers downloaded by Playwright stay inside the project virtual environment.
@@ -124,8 +125,12 @@ postgres-up: check-kubeconfig
 postgres-down: check-kubeconfig
 	kubectl --context $(KUBE_CONTEXT) delete --kustomize $(POSTGRES_MANIFESTS)
 
-## Install or upgrade Nessie (API on port 19120, in-memory version store).
+## Install or upgrade Nessie (native API and Iceberg REST catalog on port 19120,
+## in-memory version store). Its S3 credentials Secret is applied first.
 nessie-up: check-kubeconfig check-helm-env helm-repos
+	kubectl --context $(KUBE_CONTEXT) create namespace $(NAMESPACE) --dry-run=client --output yaml \
+		| kubectl --context $(KUBE_CONTEXT) apply --filename -
+	kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) apply --filename $(NESSIE_S3_SECRET)
 	helm upgrade --install nessie $(NESSIE_CHART) \
 		--version $(NESSIE_VERSION) \
 		--kube-context $(KUBE_CONTEXT) \
@@ -169,6 +174,11 @@ airflow-down: check-kubeconfig check-helm-env
 ## End-to-end check: Trino writes an Iceberg table to SeaweedFS and Nessie records the commit.
 smoke-test: check-kubeconfig
 	bash tests/smoke/run.sh
+
+## REST catalog check: PyIceberg writes a table through Nessie's Iceberg REST catalog
+## from a throwaway pod, then Trino reads it through the native API (see ADR 004).
+rest-catalog-test: check-kubeconfig
+	bash tests/catalog/run.sh
 
 ## Project virtual environment with Playwright and its headless Chromium (never installed globally).
 $(VENV)/bin/playwright: tools/screenshots/requirements.txt

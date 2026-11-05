@@ -99,11 +99,14 @@ Sans direnv, exporter à la main les quatre variables de [`.envrc.example`](.env
 ### Lancer la stack
 
 ```bash
-make up              # cluster k3d, puis SeaweedFS, Nessie et Trino
-make smoke-test      # test de bout en bout
+make up                 # cluster k3d, puis SeaweedFS, PostgreSQL, Nessie, Trino et Airflow
+make smoke-test         # test de bout en bout
+make rest-catalog-test  # écriture PyIceberg par le catalogue REST, lue depuis Trino
 ```
 
-`make up` peut être relancé : il ne recrée pas le cluster existant et met à jour les composants. Pour un seul composant, utiliser sa cible : `make cluster-up`, `make seaweedfs-up`, `make nessie-up` ou `make trino-up`.
+`make up` peut être relancé : il ne recrée pas le cluster existant et met à jour les composants. Pour un seul composant, utiliser sa cible : `make cluster-up`, `make seaweedfs-up`, `make postgres-up`, `make nessie-up`, `make trino-up` ou `make airflow-up`.
+
+`make rest-catalog-test` vérifie le chemin d'écriture de l'ingestion (voir l'[ADR 004](docs/adr/004-catalogue-rest-ingestion.md)) : depuis un pod éphémère, PyIceberg crée une table par le catalogue REST de Nessie, y ajoute des lignes puis en remplace une partie. Trino relit ensuite la table par l'API native, et Nessie doit montrer un commit par écriture.
 
 Le smoke test crée une table Iceberg depuis Trino, la relit, vérifie que ses fichiers sont dans SeaweedFS et que son commit apparaît dans Nessie. Il se termine par :
 

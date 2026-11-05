@@ -12,10 +12,30 @@ replicaCount: 1
 # Acceptable for the first iterations; PostgreSQL replaces it at step 4.5.
 versionStoreType: IN_MEMORY
 
+# Iceberg REST catalog (/iceberg), used by PyIceberg for ingestion. Trino stays
+# on the native API (/api/v2): both see the same tables. See ADR 004.
 catalog:
-  # Only the native Nessie API (v2) for now. Whether to expose the Iceberg
-  # REST catalog is decided in ADR 002, before Trino is wired in.
-  enabled: false
+  enabled: true
+  iceberg:
+    defaultWarehouse: warehouse
+    warehouses:
+      - name: warehouse
+        location: s3://warehouse/
+  storage:
+    s3:
+      defaultOptions:
+        endpoint: http://seaweedfs-s3:8333
+        pathStyleAccess: true
+        region: us-east-1
+        # Nessie writes table metadata with its own static keys.
+        authType: STATIC
+        accessKeySecret:
+          name: nessie-s3-credentials
+          awsAccessKeyId: access-key-id
+          awsSecretAccessKey: secret-access-key
+        # Clients use their own S3 keys: no request signing, and no vended
+        # credentials (clientIam stays disabled), which would need STS.
+        requestSigningEnabled: false
 
 # Quarkus JVM: sized for a single developer workload.
 resources:

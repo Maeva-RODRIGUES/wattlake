@@ -51,14 +51,15 @@ Ce sont les critères de l'ADR 002, appliqués à l'ingestion :
 | Option | Avantages | Limites |
 | --- | --- | --- |
 | Identifiants temporaires (STS) | Aucune clé permanente chez le client. Droits limités à chaque table | Même risque STS que pour Trino |
-| Signature des requêtes par Nessie | Seul Nessie détient des clés. Aucun besoin de STS | PyIceberg ne gère la signature distante qu'avec `FsspecFileIO` : une dépendance en plus (`s3fs`), pas l'implémentation par défaut. Combinaison PyIceberg, signature Nessie et SeaweedFS non documentée |
-| Clés S3 propres à PyIceberg | Mécanisme le plus simple, géré par `PyArrowFileIO`, l'implémentation par défaut. Ne dépend que de l'API S3 de SeaweedFS, déjà utilisée par Trino | Airflow détient des clés S3 : un composant de plus qui en possède |
+| Signature des requêtes par Nessie | Seul Nessie détient des clés. Aucun besoin de STS | PyIceberg ne gère la signature distante qu'avec `FsspecFileIO` (bibliothèque `s3fs`). Combinaison PyIceberg, signature Nessie et SeaweedFS non documentée |
+| Clés S3 propres à PyIceberg | Mécanisme le plus simple. Ne dépend que de l'API S3 de SeaweedFS, déjà utilisée par Trino | Airflow détient des clés S3 : un composant de plus qui en possède |
 
 ## Décision
 
 - **L'ingestion écrit avec PyIceberg via le catalogue REST Iceberg de Nessie** (`/iceberg`). Le catalogue est activé dans Nessie avec un warehouse `warehouse` pointant vers `s3://warehouse`.
 - **Trino reste sur l'API native.** Passer au catalogue REST le ferait dépendre de STS. Les deux API donnent accès aux mêmes tables et aux mêmes branches : une table écrite par PyIceberg est lue par Trino sans migration.
-- **PyIceberg accède à SeaweedFS avec ses propres clés S3**, par `PyArrowFileIO`, sans identifiants temporaires ni signature des requêtes. La signature est désactivée dans Nessie, pour qu'il ne propose pas aux clients un mécanisme qu'ils n'utilisent pas.
+- **PyIceberg accède à SeaweedFS avec ses propres clés S3**, sans identifiants temporaires ni signature des requêtes. La signature est désactivée dans Nessie, pour qu'il ne propose pas aux clients un mécanisme qu'ils n'utilisent pas.
+- **PyIceberg lit et écrit les fichiers par `FsspecFileIO`**, donc avec la bibliothèque `s3fs`. Ce n'est pas un choix : Nessie 0.109.0 renvoie `py-io-impl: pyiceberg.io.fsspec.FsspecFileIO` dans la configuration de chaque table, même quand la signature est désactivée, et PyIceberg donne la priorité à cette configuration sur celle du client. Les versions de `s3fs` et de ses dépendances suivent les contraintes d'Airflow 3.2.2.
 - **Nessie reçoit ses propres clés S3** (mode `STATIC`) pour écrire les métadonnées des tables. Le chart Nessie les lit dans un Secret Kubernetes.
 
 Les clés restent des valeurs de développement jusqu'à l'étape 4.4.
@@ -68,7 +69,12 @@ Les clés restent des valeurs de développement jusqu'à l'étape 4.4.
 - Trois composants détiennent désormais des clés S3 (Trino, Nessie et Airflow), contre un seul avec l'ADR 002 : le critère 2 recule. À l'étape 4.4, chacun recevra sa propre identité SeaweedFS, avec des droits limités à ce dont il a besoin.
 - Le Secret du chart Nessie est le premier Secret Kubernetes du projet. Il contient des valeurs de développement, comme les fichiers de valeurs.
 - Le catalogue REST et l'API native doivent cohabiter. La sous-étape 2.7 le vérifie : une table écrite par PyIceberg doit être lisible depuis Trino, et son commit visible dans Nessie. Si ce n'est pas le cas, cette décision sera réexaminée avant d'écrire le DAG.
-- L'image Airflow doit contenir PyIceberg. Elle devient une image personnalisée (sous-étape 2.8).
+- Par le catalogue REST, Nessie ne renvoie que le snapshot Iceberg de son commit courant : l'historique d'une table est celui des commits Nessie. Le voyage dans le temps se fait par commit, branche, tag ou horodatage Nessie, pas par identifiant de snapshot Iceberg. C'est cohérent avec le Write-Audit-Publish prévu à l'étape 4.6, fondé sur les branches.
+- L'image Airflow doit contenir PyIceberg et `s3fs`. Elle devient une image personnalisée (sous-étape 2.8).
+
+### Correction après la sous-étape 2.7
+
+La première version de cet ADR prévoyait que PyIceberg utiliserait `PyArrowFileIO`, son implémentation par défaut. Le test de la sous-étape 2.7 a montré que Nessie impose `FsspecFileIO` (voir la décision). Le principe ne change pas : PyIceberg utilise ses propres clés, sans signature ni STS. Seule l'implémentation du FileIO change, avec `s3fs` en dépendance supplémentaire. Comme `s3fs` est de toute façon nécessaire, la signature des requêtes n'aurait plus de coût en dépendances si elle était réexaminée.
 
 Je réexaminerai cette décision dans deux cas :
 
@@ -78,7 +84,9 @@ Je réexaminerai cette décision dans deux cas :
 ## Sources
 
 - ADR 002, risque STS et documentation Trino du catalogue REST de Nessie 0.109.0 : [002-api-catalogue-nessie.md](002-api-catalogue-nessie.md)
-- Nessie, catalogue REST Iceberg : https://projectnessie.org/guides/iceberg-rest/
+- Nessie, catalogue REST Iceberg (dont le snapshot unique par commit) : https://projectnessie.org/guides/iceberg-rest/
 - Chart Helm Nessie 0.109.0, options `catalog.storage.s3` (`authType`, `requestSigningEnabled`, `clientIam`, `accessKeySecret`) : https://github.com/projectnessie/nessie/blob/nessie-0.109.0/helm/nessie/values.yaml
 - PyIceberg, configuration du FileIO (signature distante limitée à `FsspecFileIO`) : https://py.iceberg.apache.org/configuration/
+- PyIceberg 0.12.0, priorité de la configuration de table renvoyée par le serveur (`RestCatalog._load_file_io`) : https://github.com/apache/iceberg-python/blob/pyiceberg-0.12.0/pyiceberg/catalog/rest/__init__.py
+- Contraintes d'Airflow 3.2.2 pour Python 3.13 (`s3fs`, `fsspec`, `pyarrow`) : https://raw.githubusercontent.com/apache/airflow/constraints-3.2.2/constraints-3.13.txt
 - Trino 484, procédure `add_files` du connecteur Iceberg : https://trino.io/docs/484/connector/iceberg.html
