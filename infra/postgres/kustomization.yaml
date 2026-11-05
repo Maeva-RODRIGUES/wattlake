@@ -1,0 +1,14 @@
+# PostgreSQL for the Airflow metadata database (see docs/adr/003-base-metadonnees-airflow.md).
+# Usage: make postgres-up / make postgres-down
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wattlake
+labels:
+  - pairs:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/part-of: wattlake
+    includeSelectors: true
+resources:
+  - initdb.yaml
+  - service.yaml
+  - statefulset.yaml

@@ -19,19 +19,22 @@ TRINO_CHART         := trino/trino
 TRINO_VERSION       := 1.45.0
 TRINO_VALUES        := infra/trino/values.yaml
 
+POSTGRES_MANIFESTS  := infra/postgres
+
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
-	helm-repos seaweedfs-up seaweedfs-down nessie-up nessie-down trino-up trino-down smoke-test \
-	screenshots
+	helm-repos seaweedfs-up seaweedfs-down postgres-up postgres-down nessie-up nessie-down \
+	trino-up trino-down smoke-test screenshots
 
 VENV                := .venv
 # Browsers downloaded by Playwright stay inside the project virtual environment.
 export PLAYWRIGHT_BROWSERS_PATH := $(CURDIR)/$(VENV)/ms-playwright
 
 ## Create the cluster and deploy the whole stack. Sequential sub-makes keep the
-## order (cluster, storage, catalog, engine) even when make runs with -j.
+## order (cluster, storage, database, catalog, engine) even when make runs with -j.
 up: check-kubeconfig check-helm-env
 	$(MAKE) cluster-up
 	$(MAKE) seaweedfs-up
+	$(MAKE) postgres-up
 	$(MAKE) nessie-up
 	$(MAKE) trino-up
 
@@ -96,6 +99,18 @@ seaweedfs-up: check-kubeconfig check-helm-env helm-repos
 ## Uninstall SeaweedFS. PVCs are kept: delete them by hand to wipe the data.
 seaweedfs-down: check-kubeconfig check-helm-env
 	helm uninstall seaweedfs --kube-context $(KUBE_CONTEXT) --namespace $(NAMESPACE)
+
+## Deploy PostgreSQL 17 (official image, port 5432) with the airflow role and database.
+postgres-up: check-kubeconfig
+	kubectl --context $(KUBE_CONTEXT) create namespace $(NAMESPACE) --dry-run=client --output yaml \
+		| kubectl --context $(KUBE_CONTEXT) apply --filename -
+	kubectl --context $(KUBE_CONTEXT) apply --kustomize $(POSTGRES_MANIFESTS)
+	kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) rollout status statefulset/postgres --timeout 5m
+	kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) get pods
+
+## Remove PostgreSQL. The PVC is kept: delete it by hand to wipe the data.
+postgres-down: check-kubeconfig
+	kubectl --context $(KUBE_CONTEXT) delete --kustomize $(POSTGRES_MANIFESTS)
 
 ## Install or upgrade Nessie (API on port 19120, in-memory version store).
 nessie-up: check-kubeconfig check-helm-env helm-repos

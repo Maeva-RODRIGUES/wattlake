@@ -1,0 +1,12 @@
+# Headless service: governs the StatefulSet pod DNS name and gives clients
+# a stable address, postgres.wattlake.svc.cluster.local:5432.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  clusterIP: None
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

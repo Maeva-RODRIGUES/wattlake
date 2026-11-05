@@ -1,0 +1,63 @@
+# Single PostgreSQL instance from the official image, with one persistent volume.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  template:
+    spec:
+      securityContext:
+        # uid and gid of the "postgres" user in the official image.
+        runAsUser: 999
+        runAsGroup: 999
+        runAsNonRoot: true
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:17.10
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            # DEVELOPMENT ONLY: fake placeholder password, replaced by a real secret at step 4.4.
+            - name: POSTGRES_PASSWORD
+              value: postgres-dev
+            # Subdirectory of the volume, so initdb always starts from an empty directory.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "--username", "postgres", "--host", "127.0.0.1"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "--username", "postgres", "--host", "127.0.0.1"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: initdb
+          configMap:
+            name: postgres-initdb
+  # The PVC outlives the StatefulSet: deleting it is the only way to wipe the data.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
