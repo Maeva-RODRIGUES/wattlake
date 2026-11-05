@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wattlake-ingestion"
+version = "0.1.0"
+description = "Extraction of the RTE eCO2mix datasets for the WattLake bronze layer"
+license = "Apache-2.0"
+# Same Python as the apache/airflow:3.2.2 image the DAGs run in.
+requires-python = ">=3.13"
+# Pinned to the Airflow 3.2.2 constraints, so the image's version is the one tested here.
+dependencies = [
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest==9.1.1",
+    "respx==0.23.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wattlake_ingestion"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"

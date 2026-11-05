@@ -26,9 +26,14 @@ AIRFLOW_CHART       := apache-airflow/airflow
 AIRFLOW_VERSION     := 1.22.0
 AIRFLOW_VALUES      := infra/airflow/values.yaml
 
+INGESTION_DIR       := ingestion
+INGESTION_VENV      := $(INGESTION_DIR)/.venv
+# Same Python as the apache/airflow:3.2.2 image the DAGs run in.
+INGESTION_PYTHON    := 3.13.13
+
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	helm-repos seaweedfs-up seaweedfs-down postgres-up postgres-down nessie-up nessie-down \
-	trino-up trino-down airflow-up airflow-down smoke-test screenshots
+	trino-up trino-down airflow-up airflow-down smoke-test screenshots ingestion-test
 
 VENV                := .venv
 # Browsers downloaded by Playwright stay inside the project virtual environment.
@@ -175,3 +180,14 @@ $(VENV)/bin/playwright: tools/screenshots/requirements.txt
 ## Run the smoke test, then capture the Nessie and Trino web interfaces into docs/images/.
 screenshots: check-kubeconfig $(VENV)/bin/playwright
 	$(VENV)/bin/python tools/screenshots/capture.py
+
+## Ingestion virtual environment, built by uv with the Python of the Airflow image.
+## Rebuilt from scratch whenever pyproject.toml changes.
+$(INGESTION_VENV)/bin/pytest: $(INGESTION_DIR)/pyproject.toml
+	uv venv --clear --python $(INGESTION_PYTHON) $(INGESTION_VENV)
+	uv pip install --python $(INGESTION_VENV)/bin/python --editable "$(INGESTION_DIR)[test]"
+	touch $@
+
+## Run the ingestion unit tests (no network access: HTTP calls are mocked).
+ingestion-test: $(INGESTION_VENV)/bin/pytest
+	cd $(INGESTION_DIR) && .venv/bin/pytest

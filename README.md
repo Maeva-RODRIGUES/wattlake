@@ -80,6 +80,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | kubectl | 1.35 | Pilote le cluster |
 | Helm | 3.12 | Déploie les composants de la stack |
 | Python | 3.12 | Utilisé par le smoke test |
+| uv | 0.11 | Crée l'environnement Python 3.13 du code d'ingestion et de ses tests |
 | direnv | 2.32 | Charge les variables d'environnement du projet (optionnel) |
 
 Prévoir 16 Go de mémoire libre : les limites mémoire des composants atteignent environ 13 Go, dont 5 Go pour Trino et 5,5 Go pour Airflow, et les Jobs d'installation d'Airflow ajoutent temporairement 2 Go.
