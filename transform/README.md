@@ -25,7 +25,31 @@ La cible crée au besoin `transform/.venv` avec [uv](https://docs.astral.sh/uv/)
 
 Depuis dbt 1.8, dbt-core et les adaptateurs sont publiés séparément et communiquent par le paquet `dbt-adapters` : leurs versions mineures n'ont plus à correspondre. dbt-trino 1.10.6 déclare accepter `dbt-core>=1.8,<2.0`.
 
-**Combinaison à valider** : dbt-core 1.12 et dbt-trino 1.10 n'ont pas forcément été testés ensemble par leurs mainteneurs. Pour l'instant, la combinaison n'est vérifiée que par `dbt debug`, `dbt parse`, `dbt ls` et une lecture de la source avec `dbt show`. Ces commandes valident la connexion et l'exécution de requêtes, mais pas la matérialisation : création et remplacement de tables Iceberg, exécution des tests. Le premier `dbt build` de l'étape 3.2, sur les modèles silver, sert de validation de la matérialisation. En cas d'échec lié à l'adaptateur, il faudra revoir ces versions avant d'aller plus loin.
+**Validation de la combinaison** : dbt-core 1.12 et dbt-trino 1.10 n'ont pas forcément été testés ensemble par leurs mainteneurs. À l'étape 3.1, `dbt debug`, `dbt parse`, `dbt ls` et `dbt show` ont validé la connexion et l'exécution de requêtes. À l'étape 3.2, le premier `dbt build` a validé la matérialisation, le 6 novembre 2026 :
+
+- création du schéma `iceberg.silver` et de la table `eco2mix_national` (514 212 lignes, en 5 secondes), puis exécution des tests `unique` et `not_null` ;
+- second `dbt build` : table remplacée par un `create or replace table` atomique, avec le même résultat, en un seul commit Nessie.
+
+## Couche silver
+
+Le modèle [models/silver/eco2mix_national.sql](models/silver/eco2mix_national.sql) produit `iceberg.silver.eco2mix_national` : une ligne par quart d'heure, typée et dédoublonnée.
+
+- **Dédoublonnage** : une ligne n'est gardée que si son heure locale (`heure`) correspond à `date_heure` en heure de Paris. La règle écarte exactement les 60 lignes artificielles du passage à l'heure d'été, et `timestamp_utc` devient unique.
+- **Typage** : `ND` (« non disponible ») devient `NULL`, puis les nombres publiés en texte sont convertis en entier. Une autre valeur non numérique fait échouer le modèle. `date` et `heure` sont remplacées par `local_date`, de type `date`.
+- **Noms en anglais, avec l'unité** (`consumption_mw`, `co2_intensity_g_per_kwh`…). Le nom d'origine de chaque colonne est dans son `meta.source_field`.
+- **Matérialisation** : table reconstruite en entier à chaque exécution, avec `on_table_exists: replace`. Un modèle incrémental ne se justifie pas pour environ 500 000 lignes.
+
+**Puissance et énergie** : les colonnes `*_mw` sont des puissances moyennes sur le pas de temps, pas des énergies. [models/silver/_silver.yml](models/silver/_silver.yml) donne, pour chaque colonne, son pas de publication et sa conversion en MWh :
+
+| Colonnes | Pas | Énergie (MWh) |
+| --- | --- | --- |
+| Consommation, filières, pompage, échanges physiques | 30 min (lignes :00 et :30) | valeur × 0,5 |
+| Détail par technologie | 30 min, à partir de 2013 | valeur × 0,5 |
+| Prévisions de consommation | 15 min | valeur × 0,25 |
+| Échanges commerciaux | 30 min, puis 15 min à partir du 2024-06-26 22:00 UTC | valeur × 0,5, puis × 0,25 |
+| `co2_intensity_g_per_kwh` | 30 min | Pas une puissance : moyenne pondérée par l'énergie produite |
+
+Deux hypothèses, que la spécification de RTE ne tranche pas : `timestamp_utc` marque le début de l'intervalle, et les échanges commerciaux sont des puissances moyennes, comme la production et la consommation.
 
 ## Dépendances : pourquoi `requirements.in` et `uv pip compile`
 

@@ -1,0 +1,170 @@
+version: 2
+
+# Power columns and energy (read before aggregating, step 3.3).
+#
+# Every *_mw column is a POWER in MW, not an energy. The history only holds
+# consolidated and definitive data, which RTE defines as average power over the
+# time step ("données de puissance moyenne basées sur les comptages", RTE,
+# "Spécification des fichiers de données en puissance pour éCO2mix", 1.1).
+# The energy of one row is therefore:  energy_mwh = value_mw * step_hours
+# where step_hours depends on the column's publication step (meta.publication_step):
+#   - 30min: values only at minutes :00 and :30, null at :15 and :45 -> 0.5 h
+#   - 15min: a value every quarter hour                               -> 0.25 h
+# Summing MW values directly over a period gives a meaningless number.
+#
+# Assumption, not stated by the RTE specification: timestamp_utc is the START of
+# the interval the value covers. It only matters at period boundaries (the first
+# and last step of a day or month).
+
+models:
+  - name: eco2mix_national
+    description: >
+      eCO2mix national history from RTE, cleaned and typed. One row per quarter
+      hour (timestamp_utc), January 2012 onwards. Built from the bronze table:
+      the 60 artificial rows of the spring clock changes are removed (local
+      02:00-02:45 does not exist, see docs/sources.md quirk 7), "ND" text values
+      become null, and columns get English names with their unit. Realised
+      values are published every 30 minutes and forecasts every 15 minutes, so
+      the grain mixes both: see each column's meta.publication_step.
+    columns:
+      - name: timestamp_utc
+        description: Quarter hour, in UTC. Unique. Assumed to be the start of the interval.
+        meta: {source_field: date_heure}
+        data_tests:
+          - unique
+          - not_null
+      - name: local_date
+        description: Date in Paris time, for daily aggregation in the French calendar.
+        meta: {source_field: date}
+      - name: data_status
+        description: "Data status: definitive (until 2025-12-31) or consolidated (2026), real_time for the real-time dataset."
+        meta: {source_field: nature}
+
+      # Consumption and forecasts
+      - name: consumption_mw
+        description: Realised consumption, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        meta: &half_hour_power {unit: MW, quantity: average_power, publication_step: 30min, energy_mwh: "value * 0.5", source_field: consommation}
+      - name: consumption_forecast_day_ahead_mw
+        description: Consumption forecast made the day before, power in MW every 15 minutes. Forecast energy = value * 0.25 h.
+        meta: {unit: MW, quantity: forecast_power, publication_step: 15min, energy_mwh: "value * 0.25", source_field: prevision_j1}
+      - name: consumption_forecast_intraday_mw
+        description: Consumption forecast updated the same day, power in MW every 15 minutes. Forecast energy = value * 0.25 h.
+        meta: {unit: MW, quantity: forecast_power, publication_step: 15min, energy_mwh: "value * 0.25", source_field: prevision_j}
+
+      # Production by source
+      - name: nuclear_mw
+        description: Nuclear production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_power, source_field: nucleaire}
+      - name: wind_mw
+        description: Wind production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_power, source_field: eolien}
+      - name: solar_mw
+        description: Solar production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_power, source_field: solaire}
+      - name: hydro_mw
+        description: Hydro production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_power, source_field: hydraulique}
+      - name: bioenergy_mw
+        description: Bioenergy production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_power, source_field: bioenergies}
+      - name: gas_mw
+        description: Gas production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_power, source_field: gaz}
+      - name: coal_mw
+        description: Coal production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_power, source_field: charbon}
+      - name: fuel_oil_mw
+        description: Fuel oil production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_power, source_field: fioul}
+
+      # Production detail by technology: published from 2013-01-01 only, null in 2012
+      - name: hydro_run_of_river_mw
+        description: Run-of-river hydro, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: &half_hour_detail {<<: *half_hour_power, available_from: "2013-01-01", source_field: hydraulique_fil_eau_eclusee}
+      - name: hydro_reservoir_mw
+        description: Reservoir hydro, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: hydraulique_lacs}
+      - name: hydro_pumped_storage_generation_mw
+        description: Pumped-storage turbining, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: hydraulique_step_turbinage}
+      - name: bioenergy_waste_mw
+        description: Waste bioenergy, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: bioenergies_dechets}
+      - name: bioenergy_biomass_mw
+        description: Biomass bioenergy, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: bioenergies_biomasse}
+      - name: bioenergy_biogas_mw
+        description: Biogas bioenergy, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: bioenergies_biogaz}
+      - name: gas_combustion_turbine_mw
+        description: Gas combustion turbines, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: gaz_tac}
+      - name: gas_cogeneration_mw
+        description: Gas cogeneration, average power in MW over 30 minutes, from 2013. "ND" in the source becomes null. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: gaz_cogen}
+      - name: gas_combined_cycle_mw
+        description: Gas combined cycle, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: gaz_ccg}
+      - name: gas_other_mw
+        description: Other gas, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: gaz_autres}
+      - name: fuel_oil_combustion_turbine_mw
+        description: Fuel oil combustion turbines, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: fioul_tac}
+      - name: fuel_oil_cogeneration_mw
+        description: Fuel oil cogeneration, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: fioul_cogen}
+      - name: fuel_oil_other_mw
+        description: Other fuel oil, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_detail, source_field: fioul_autres}
+
+      # Storage
+      - name: pumped_storage_pumping_mw
+        description: >
+          Power used by pumped-storage pumps, NEGATIVE values (a consumption),
+          average power in MW over 30 minutes. Energy = value * 0.5 h (negative).
+          Do not add it to production totals.
+        meta: {<<: *half_hour_power, sign: negative, source_field: pompage}
+
+      # Exchanges: negative means France exports, positive means it imports
+      - name: physical_exchange_balance_mw
+        description: Balance of physical flows at the borders, average power in MW over 30 minutes. Negative = export. Energy = value * 0.5 h.
+        meta: {<<: *half_hour_power, sign: "negative = export", source_field: ech_physiques}
+      - name: commercial_exchange_great_britain_mw
+        description: &commercial_exchange_description >
+          Commercial exchange balance with this border, power in MW. Negative =
+          export. Published every 30 minutes until 2024-06-26 22:00 UTC
+          (2024-06-27 00:00 Paris time), then every 15 minutes: energy = value
+          * 0.5 h before that time and value * 0.25 h after. The RTE
+          specification defines average power for production and consumption
+          only; treating exchanges the same way is an assumption.
+        meta: &commercial_exchange {unit: MW, quantity: power, sign: "negative = export", publication_step: 30min, publication_step_from_2024-06-26T22:00Z: 15min, energy_mwh: "value * 0.5 before 2024-06-26T22:00Z, value * 0.25 after", source_field: ech_comm_angleterre}
+      - name: commercial_exchange_spain_mw
+        description: *commercial_exchange_description
+        meta: {<<: *commercial_exchange, source_field: ech_comm_espagne}
+      - name: commercial_exchange_italy_mw
+        description: *commercial_exchange_description
+        meta: {<<: *commercial_exchange, source_field: ech_comm_italie}
+      - name: commercial_exchange_switzerland_mw
+        description: *commercial_exchange_description
+        meta: {<<: *commercial_exchange, source_field: ech_comm_suisse}
+      - name: commercial_exchange_germany_belgium_mw
+        description: *commercial_exchange_description
+        meta: {<<: *commercial_exchange, source_field: ech_comm_allemagne_belgique}
+
+      # Emissions
+      - name: co2_intensity_g_per_kwh
+        description: >
+          Estimated CO2 intensity of French electricity production, in g/kWh,
+          every 30 minutes. NOT a power: it cannot be converted to energy nor
+          summed. Average it over a period weighted by the production energy
+          of each step.
+        meta: {unit: g/kWh, quantity: intensity, publication_step: 30min, energy_mwh: "not applicable", source_field: taux_co2}
+
+      # Lineage
+      - name: source_dataset
+        description: ODRE dataset the row was loaded from.
+        meta: {source_field: _source_dataset}
+      - name: ingested_at
+        description: Time of the bronze load that wrote the row (UTC).
+        meta: {source_field: _ingested_at}

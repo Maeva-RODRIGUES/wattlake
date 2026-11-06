@@ -10,6 +10,15 @@ model-paths: ["models"]
 target-path: target
 clean-targets: ["target", "dbt_packages"]
 
+models:
+  wattlake:
+    silver:
+      # Rebuilt in full on each run (about 500,000 rows). "replace" makes Trino
+      # use CREATE OR REPLACE TABLE: readers see the old or the new table,
+      # never a missing or half-written one.
+      +materialized: table
+      +on_table_exists: replace
+
 flags:
   # No usage statistics sent to dbt Labs, and no .user.yml written locally.
   send_anonymous_usage_stats: false
