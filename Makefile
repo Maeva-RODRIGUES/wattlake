@@ -29,13 +29,15 @@ AIRFLOW_VALUES      := infra/airflow/values.yaml
 # Custom Airflow image (ingestion/Dockerfile). Bump the tag whenever the image
 # changes: with the same tag, Helm sees no change and keeps the running pods.
 AIRFLOW_IMAGE_REPO  := wattlake-airflow
-AIRFLOW_IMAGE_TAG   := 0.1.0
+AIRFLOW_IMAGE_TAG   := 0.2.0
 AIRFLOW_IMAGE       := $(AIRFLOW_IMAGE_REPO):$(AIRFLOW_IMAGE_TAG)
 
 INGESTION_DIR       := ingestion
 INGESTION_VENV      := $(INGESTION_DIR)/.venv
 # Same Python as the apache/airflow:3.2.2 image the DAGs run in.
 INGESTION_PYTHON    := 3.13.13
+# Same constraints as ingestion/Dockerfile: the tests resolve the image's versions.
+AIRFLOW_CONSTRAINTS := https://raw.githubusercontent.com/apache/airflow/constraints-3.2.2/constraints-3.13.txt
 
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	helm-repos seaweedfs-up seaweedfs-down postgres-up postgres-down nessie-up nessie-down \
@@ -213,7 +215,8 @@ screenshots: check-kubeconfig $(VENV)/bin/playwright
 ## Rebuilt from scratch whenever pyproject.toml changes.
 $(INGESTION_VENV)/bin/pytest: $(INGESTION_DIR)/pyproject.toml
 	uv venv --clear --python $(INGESTION_PYTHON) $(INGESTION_VENV)
-	uv pip install --python $(INGESTION_VENV)/bin/python --editable "$(INGESTION_DIR)[test]"
+	uv pip install --python $(INGESTION_VENV)/bin/python --constraints $(AIRFLOW_CONSTRAINTS) \
+		--editable "$(INGESTION_DIR)[test]"
 	touch $@
 
 ## Run the ingestion unit tests (no network access: HTTP calls are mocked).

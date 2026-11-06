@@ -76,6 +76,7 @@ Ces points concernent surtout la couche silver.
 4. **Schémas différents** : quatre champs n'existent que dans le temps réel (voir plus haut). La table silver doit les accepter vides pour l'historique.
 5. **Fuseaux horaires** : `date_heure` est en UTC. Les champs `date` et `heure` sont en heure locale : à l'automne, la même heure locale apparaît deux fois.
 6. **Description du portail en retard sur les données** : la description de l'historique annonce des données définitives jusqu'en décembre 2024 et consolidées depuis janvier 2021. Les données elles-mêmes sont définitives jusqu'au 31 décembre 2025. Ce document s'appuie sur les données.
+7. **Lignes artificielles au passage à l'heure d'été** : le dernier dimanche de mars, l'heure locale passe de 01:59 à 03:00, et l'heure 02:00–02:45 n'existe pas. L'historique contient pourtant des lignes datées de 02:00 à 02:45 en heure locale (`heure`), dont `date_heure` est le même que celui des lignes de 03:00 à 03:45. Leurs valeurs réalisées sont recopiées de l'heure précédente : à 02:30 le 25 mars 2012, la consommation (47 196 MW) est celle de 01:30. Cela fait 4 quarts d'heure par an, soit 60 lignes en double sur `date_heure` de 2012 à 2026, comptées dans le total de l'API. La couche bronze les conserve, la couche silver doit garder les lignes de 03:xx et écarter celles de 02:xx. Le passage à l'heure d'hiver ne crée pas de doublon : les deux occurrences de 02:xx ont des `date_heure` différents.
 
 ## Accès
 

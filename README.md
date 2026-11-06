@@ -53,7 +53,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 - [x] Création du dépôt et de la documentation
 - [x] Cluster k3d et déploiement de SeaweedFS, Nessie et Trino via Helm
 - [x] Première table Iceberg créée depuis Trino et visible dans Nessie
-- [ ] DAG Airflow chargeant l'historique dans la couche bronze
+- [x] DAG Airflow chargeant l'historique dans la couche bronze
 
 **Étape 2 : les transformations**
 - [ ] Couches silver et gold avec dbt-trino

@@ -83,6 +83,21 @@ workers:
     persistence:
       size: 1Gi
 
+# PyIceberg catalog "wattlake", read by load_catalog("wattlake") in the DAGs:
+# Nessie's Iceberg REST catalog, with the client's own S3 keys (ADR 004).
+# PyIceberg maps PYICEBERG_CATALOG__WATTLAKE__S3__ACCESS_KEY_ID to s3.access-key-id.
+env:
+  - name: PYICEBERG_CATALOG__WATTLAKE__TYPE
+    value: rest
+  - name: PYICEBERG_CATALOG__WATTLAKE__URI
+    value: http://nessie:19120/iceberg
+  # DEVELOPMENT ONLY: fake placeholder credentials from infra/seaweedfs/values.yaml,
+  # replaced by a dedicated SeaweedFS identity in a Secret at step 4.4.
+  - name: PYICEBERG_CATALOG__WATTLAKE__S3__ACCESS_KEY_ID
+    value: wattlake-dev-admin-access-key
+  - name: PYICEBERG_CATALOG__WATTLAKE__S3__SECRET_ACCESS_KEY
+    value: wattlake-dev-admin-secret-key
+
 data:
   metadataConnection:
     user: airflow
