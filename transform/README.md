@@ -51,6 +51,23 @@ Le modèle [models/silver/eco2mix_national.sql](models/silver/eco2mix_national.s
 
 Deux hypothèses, que la spécification de RTE ne tranche pas : `timestamp_utc` marque le début de l'intervalle, et les échanges commerciaux sont des puissances moyennes, comme la production et la consommation.
 
+## Couche gold
+
+Deux tables dans `iceberg.gold`, documentées dans [models/gold/_gold.yml](models/gold/_gold.yml) :
+
+- **`energy_mix_daily`** : une ligne par jour en heure de Paris, avec l'énergie en MWh de chaque filière (puissance × 0,5 h sur les demi-heures), la production totale des huit filières sans le pompage, et les parts de renouvelables. Elle indique aussi la complétude du jour : 46, 48 ou 50 demi-heures attendues selon les changements d'heure, et `is_complete`.
+- **`renewable_share_monthly`** : une ligne par mois, avec les sommes des énergies quotidiennes et les parts recalculées à partir de ces sommes.
+
+Points de conception :
+
+- **Ratio de sommes, pas moyenne de parts** : une part sur une période vaut somme des énergies renouvelables / somme de la production, ce qui pondère chaque pas de temps par son énergie. Sur 2024, la moyenne des parts quotidiennes surestime la part de 0,12 point (0,2928 contre 0,2916).
+- **Deux définitions** : `renewable_share`, au sens large (éolien, solaire, hydraulique, bioénergies), et `renewable_share_strict`, selon les conventions du SDES (sans le turbinage des STEP, avec 50 % des déchets). La part stricte vaut `NULL` en 2012, et non 0, car le détail par technologie n'est publié qu'à partir de 2013.
+- **Schéma `gold`** : la macro [macros/generate_schema_name.sql](macros/generate_schema_name.sql) utilise le nom de schéma tel quel. Sans elle, dbt aurait créé `silver_gold`.
+
+Contrôle croisé avec le Bilan électrique 2024 de RTE (chiffres provisionnels) : production 537,6 TWh contre 536,5, renouvelables au sens strict 148,0 TWh contre 148, éolien 46,8 contre 46,6. Le solaire (24,5 TWh contre 23,3) reste un écart de 5 % non expliqué.
+
+Journées incomplètes : chaque dimanche de passage à l'heure d'hiver (la source omet l'une des deux heures répétées, voir la particularité 8 de [docs/sources.md](../docs/sources.md)) et le 1er janvier 2026.
+
 ## Dépendances : pourquoi `requirements.in` et `uv pip compile`
 
 - [requirements.in](requirements.in) liste les deux dépendances directes.

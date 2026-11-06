@@ -18,6 +18,11 @@ models:
       # never a missing or half-written one.
       +materialized: table
       +on_table_exists: replace
+    gold:
+      # Exact schema name thanks to macros/generate_schema_name.sql.
+      +schema: gold
+      +materialized: table
+      +on_table_exists: replace
 
 flags:
   # No usage statistics sent to dbt Labs, and no .user.yml written locally.

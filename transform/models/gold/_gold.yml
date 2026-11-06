@@ -1,0 +1,191 @@
+version: 2
+
+# Share of renewables in the French production mix.
+#
+# 1. Energy, not power. Silver *_mw columns are average powers over 30 minutes
+#    (RTE specification, see silver _silver.yml). Each half hour contributes
+#    power * 0.5 h of energy, and energies in MWh are summed over the period.
+#
+# 2. Ratio of sums, not average of shares. A share over a period is
+#        sum(renewable energy) / sum(production energy)
+#    and never the average of instantaneous or daily shares. An average of
+#    shares gives every half hour or day the same weight: a windy night with
+#    low production would count as much as a winter peak with twice the
+#    output, and the result would no longer be the share of the energy
+#    actually produced. Weighting each step by its energy, power * duration,
+#    is what the ratio of sums does. It also aggregates consistently: the
+#    monthly share comes from monthly sums of daily energies, and a yearly
+#    share is obtained the same way from monthly energies.
+#    Measured on 2024: ratio of sums 0.2916, average of daily shares 0.2928
+#    (+0.12 point), average of half-hour shares 0.2910. The French mix is
+#    stable enough for the gap to stay small over a year, but it is a bias,
+#    and it grows with the variability of the steps being averaged.
+#
+# 3. Two definitions of renewables.
+#    - renewable_share, broad: wind + solar + hydro + bioenergy, the eCO2mix
+#      production sources. Available from 2012.
+#    - renewable_share_strict, statistical conventions of the SDES (Chiffres
+#      clés des énergies renouvelables, édition 2025, Définitions et méthodes):
+#        "Hydroélectricité renouvelable : elle est égale à l'hydroélectricité
+#        totale dont on retire l'hydroélectricité issue des pompages [...] (Step)"
+#        "les déchets comptabilisés comme source d'énergie renouvelable sont
+#        estimés par convention internationale à 50 % de l'ensemble des déchets
+#        ménagers incinérés"
+#      so wind + solar + (hydro - pumped-storage turbining)
+#      + (bioenergy - 50 % of waste). Applying the household-waste convention to
+#      the eCO2mix "déchets" category is an assumption.
+#      https://www.statistiques.developpement-durable.gouv.fr/edition-numerique/chiffres-cles-energies-renouvelables/fr/26-definitions-et-methodes-
+#
+# 4. Strict share and missing detail. The technology detail it needs is
+#    published from 2013-01-01 00:30 Paris time only. Before that, the strict
+#    renewable energy is unknown: renewable_strict_mwh and renewable_share_strict
+#    are NULL, never 0, because 0 would claim that no renewable energy was
+#    produced. When the detail is partial (2013-01-01), the strict share uses the
+#    same half hours in its numerator and denominator (production_with_detail_mwh)
+#    so that it is not biased downwards.
+#
+# 5. Cross-check, year 2024 (RTE Bilan électrique 2024, provisional figures of
+#    20 January 2025, as reported by AFP): production 536.5 TWh, renewables
+#    148 TWh, hydro 74.7 TWh, wind 46.6 TWh, solar 23.3 TWh.
+#    https://www.banquedesterritoires.fr/la-france-produit-toujours-plus-delectricite-decarbonee
+#    These models give, for 2024: production 537.6 TWh (+0.2 %), strict
+#    renewables 148.0 TWh (same as RTE), hydro 74.8 TWh including pumped-storage
+#    turbining (so RTE's hydro figure includes it too), wind 46.8 TWh. Solar is
+#    24.5 TWh, 5 % above RTE's 23.3 TWh: this gap is not explained yet.
+#
+# 6. Incomplete days. The source omits the first of the two repeated hours at
+#    the autumn clock change (docs/sources.md, quirk 8): every last Sunday of
+#    October has 48 half hours instead of 50, and is_complete is false. The
+#    other incomplete day is 2026-01-01, whose first half hour is missing.
+#    Shares stay valid ratios over the half hours present.
+
+models:
+  - name: energy_mix_daily
+    description: >
+      Daily energy mix of France in MWh, one row per day in Paris time
+      (local_date), with the share of renewables in production for the day.
+      Built from the half-hour rows of silver eco2mix_national.
+    columns:
+      - name: local_date
+        description: Day in Paris time. Unique.
+        data_tests:
+          - unique
+          - not_null
+      - name: expected_half_hours
+        description: Half hours in the day, 46 on the spring clock-change day, 50 in autumn, 48 otherwise.
+      - name: half_hours_with_data
+        description: Half hours with a known production for all eight sources.
+      - name: half_hours_with_detail
+        description: Half hours with the technology detail needed by the strict definition. 0 in 2012.
+      - name: is_complete
+        description: >
+          True when every half hour of the day has data. False on every autumn
+          clock-change day (the source omits one of the repeated hours) and on
+          2026-01-01, whose first half hour is missing at the source.
+      - name: consumption_mwh
+        description: Realised consumption, MWh.
+        meta: &mwh {unit: MWh, quantity: energy, computed_as: "sum(power_mw * 0.5)"}
+      - name: production_mwh
+        description: Total production of the eight sources (nuclear, wind, solar, hydro, bioenergy, gas, coal, fuel oil), MWh. Excludes pumping.
+        meta: *mwh
+      - name: nuclear_mwh
+        description: Nuclear production, MWh.
+        meta: *mwh
+      - name: wind_mwh
+        description: Wind production, MWh.
+        meta: *mwh
+      - name: solar_mwh
+        description: Solar production, MWh.
+        meta: *mwh
+      - name: hydro_mwh
+        description: Hydro production including pumped-storage turbining, MWh.
+        meta: *mwh
+      - name: bioenergy_mwh
+        description: Bioenergy production including all waste, MWh.
+        meta: *mwh
+      - name: gas_mwh
+        description: Gas production, MWh.
+        meta: *mwh
+      - name: coal_mwh
+        description: Coal production, MWh.
+        meta: *mwh
+      - name: fuel_oil_mwh
+        description: Fuel oil production, MWh.
+        meta: *mwh
+      - name: hydro_pumped_storage_generation_mwh
+        description: Pumped-storage turbining, MWh. Not renewable (SDES). Null in 2012.
+        meta: *mwh
+      - name: bioenergy_waste_mwh
+        description: Electricity from waste, MWh. Half of it counts as renewable (SDES). Null in 2012.
+        meta: *mwh
+      - name: pumped_storage_pumping_mwh
+        description: Energy used by pumped-storage pumps, negative MWh. A consumption, never added to production.
+        meta: *mwh
+      - name: renewable_mwh
+        description: Broad renewables, wind + solar + hydro + bioenergy, MWh.
+        meta: *mwh
+      - name: renewable_strict_mwh
+        description: Strict renewables (SDES conventions), MWh. NULL in 2012, when the technology detail is unknown.
+        meta: *mwh
+      - name: production_with_detail_mwh
+        description: Production over the half hours with technology detail, denominator of the strict share. NULL in 2012.
+        meta: *mwh
+      - name: renewable_share
+        description: renewable_mwh / production_mwh, between 0 and 1. A ratio of energies, not an average of shares.
+        meta: &share {unit: ratio, computed_as: "ratio of energy sums"}
+      - name: renewable_share_strict
+        description: renewable_strict_mwh / production_with_detail_mwh, between 0 and 1. NULL in 2012 (unknown, not 0).
+        meta: *share
+
+  - name: renewable_share_monthly
+    description: >
+      Monthly share of renewables in the production mix, one row per month in
+      Paris time. Energies are the sums of the daily energies of
+      energy_mix_daily, and shares are recomputed from these sums.
+    columns:
+      - name: month
+        description: First day of the month, Paris time. Unique.
+        data_tests:
+          - unique
+          - not_null
+      - name: expected_half_hours
+        description: Half hours in the month.
+      - name: half_hours_with_data
+        description: Half hours with a known production for all eight sources.
+      - name: half_hours_with_detail
+        description: Half hours with technology detail. 0 in 2012.
+      - name: is_complete
+        description: True when every half hour of the month has data.
+      - name: consumption_mwh
+        description: Realised consumption, MWh.
+        meta: *mwh
+      - name: production_mwh
+        description: Total production of the eight sources, MWh.
+        meta: *mwh
+      - name: renewable_mwh
+        description: Broad renewables, MWh.
+        meta: *mwh
+      - name: wind_mwh
+        description: Wind production, MWh.
+        meta: *mwh
+      - name: solar_mwh
+        description: Solar production, MWh.
+        meta: *mwh
+      - name: hydro_mwh
+        description: Hydro production including pumped-storage turbining, MWh.
+        meta: *mwh
+      - name: bioenergy_mwh
+        description: Bioenergy production including all waste, MWh.
+        meta: *mwh
+      - name: renewable_strict_mwh
+        description: Strict renewables (SDES conventions), MWh. NULL in 2012.
+        meta: *mwh
+      - name: production_with_detail_mwh
+        description: Production over the half hours with technology detail, MWh. NULL in 2012.
+        meta: *mwh
+      - name: renewable_share
+        description: Broad share, ratio of the monthly energy sums.
+        meta: *share
+      - name: renewable_share_strict
+        description: Strict share, ratio of the monthly energy sums. NULL in 2012 (unknown, not 0).
+        meta: *share

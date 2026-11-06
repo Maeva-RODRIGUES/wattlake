@@ -56,7 +56,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 - [x] DAG Airflow chargeant l'historique dans la couche bronze
 
 **Étape 2 : les transformations**
-- [ ] Couches silver et gold avec dbt-trino
+- [x] Couches silver et gold avec dbt-trino
 - [ ] Tests de qualité des données dans dbt
 
 **Étape 3 : DataOps**

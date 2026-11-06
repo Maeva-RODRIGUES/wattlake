@@ -22,7 +22,9 @@ models:
       eCO2mix national history from RTE, cleaned and typed. One row per quarter
       hour (timestamp_utc), January 2012 onwards. Built from the bronze table:
       the 60 artificial rows of the spring clock changes are removed (local
-      02:00-02:45 does not exist, see docs/sources.md quirk 7), "ND" text values
+      02:00-02:45 does not exist, see docs/sources.md quirk 7). The source also
+      omits the first of the two repeated hours at the autumn clock change
+      (00:00-00:59 UTC, quirk 8): those quarter hours are absent. "ND" text values
       become null, and columns get English names with their unit. Realised
       values are published every 30 minutes and forecasts every 15 minutes, so
       the grain mixes both: see each column's meta.publication_step.
