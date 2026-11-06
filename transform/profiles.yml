@@ -1,0 +1,19 @@
+# dbt connection profile, versioned with the project and passed with --profiles-dir.
+# Host and port come from the environment, so the same profile works from a
+# laptop (port-forward, see run.sh) and from inside the cluster (step 3.5).
+wattlake:
+  target: dev
+  outputs:
+    dev:
+      type: trino
+      # Trino has no authentication on the local cluster: the user only
+      # identifies the queries in the Trino web interface.
+      method: none
+      user: wattlake
+      http_scheme: http
+      host: "{{ env_var('TRINO_HOST', 'localhost') }}"
+      port: "{{ env_var('TRINO_PORT', '8080') | as_number }}"
+      # Iceberg catalog of Trino (Nessie native API, see ADR 004).
+      database: iceberg
+      schema: silver
+      threads: 4

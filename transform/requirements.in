@@ -1,0 +1,8 @@
+# Direct dependencies of the dbt project, compiled into requirements.txt by
+# "make transform-lock", which pins every transitive dependency.
+# dbt-core 1.12 is the only 1.x line in active support (until July 2027).
+# Since dbt 1.8, dbt-core and adapters are released independently and
+# coordinate through dbt-adapters: their minor versions need not match.
+# dbt-trino 1.10.6 accepts dbt-core >=1.8,<2.0; 1.11.0 is less than two weeks old.
+dbt-core==1.12.6
+dbt-trino==1.10.6

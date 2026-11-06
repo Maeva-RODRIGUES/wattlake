@@ -80,7 +80,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | kubectl | 1.35 | Pilote le cluster |
 | Helm | 3.12 | Déploie les composants de la stack |
 | Python | 3.12 | Utilisé par le smoke test |
-| uv | 0.11 | Crée l'environnement Python 3.13 du code d'ingestion et de ses tests |
+| uv | 0.11 | Crée les environnements Python 3.13 du code d'ingestion et du projet dbt |
 | direnv | 2.32 | Charge les variables d'environnement du projet (optionnel) |
 
 Prévoir 16 Go de mémoire libre : les limites mémoire des composants atteignent environ 13 Go, dont 5 Go pour Trino et 5,5 Go pour Airflow, et les Jobs d'installation d'Airflow ajoutent temporairement 2 Go.
@@ -102,6 +102,7 @@ Sans direnv, exporter à la main les quatre variables de [`.envrc.example`](.env
 make up                 # cluster k3d, puis SeaweedFS, PostgreSQL, Nessie, Trino et Airflow (image construite et importée dans k3d)
 make smoke-test         # test de bout en bout
 make rest-catalog-test  # écriture PyIceberg par le catalogue REST, lue depuis Trino
+make dbt ARGS="debug"   # projet dbt : configuration et connexion à Trino (voir transform/README.md)
 ```
 
 `make up` peut être relancé : il ne recrée pas le cluster existant et met à jour les composants. Pour un seul composant, utiliser sa cible : `make cluster-up`, `make seaweedfs-up`, `make postgres-up`, `make nessie-up`, `make trino-up` ou `make airflow-up`.

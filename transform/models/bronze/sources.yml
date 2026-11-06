@@ -1,0 +1,32 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: >
+      Raw eCO2mix data, loaded by the Airflow DAG eco2mix_history_to_bronze
+      (ingestion/). Values are kept as the source publishes them: see
+      docs/sources.md for the fields, units and known quirks.
+    database: iceberg
+    schema: bronze
+    tables:
+      - name: eco2mix_national_history
+        description: >
+          RTE national history (dataset eco2mix-national-cons-def), definitive
+          and consolidated data, from January 2012. Quarter-hour forecasts,
+          half-hour realised values. Contains 4 artificial rows a year at the
+          spring clock change (docs/sources.md, quirk 7).
+        columns:
+          - name: date_heure
+            description: Timestamp in UTC, the reference for time.
+          - name: date
+            description: Local date (Paris time), as text.
+          - name: heure
+            description: Local time (Paris time), as text. Ambiguous at clock changes.
+          - name: nature
+            description: Data status (real-time, consolidated, definitive).
+          - name: consommation
+            description: Realised consumption, in MW. Null on quarter-hour rows.
+          - name: _source_dataset
+            description: ODRE dataset the row was loaded from.
+          - name: _ingested_at
+            description: Time of the load that wrote the row (UTC).

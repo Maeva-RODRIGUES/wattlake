@@ -1,0 +1,18 @@
+# dbt project building the silver and gold layers from the bronze layer, on Trino.
+# Usage: make dbt ARGS="<dbt command>" (see transform/README.md).
+name: wattlake
+version: "0.1.0"
+config-version: 2
+
+profile: wattlake
+
+model-paths: ["models"]
+target-path: target
+clean-targets: ["target", "dbt_packages"]
+
+flags:
+  # No usage statistics sent to dbt Labs, and no .user.yml written locally.
+  send_anonymous_usage_stats: false
+  # Opt into the future default now. The local Trino is reached over plain
+  # HTTP, so no certificate is involved today.
+  require_certificate_validation: true

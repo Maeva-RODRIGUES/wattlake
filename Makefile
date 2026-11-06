@@ -39,10 +39,15 @@ INGESTION_PYTHON    := 3.13.13
 # Same constraints as ingestion/Dockerfile: the tests resolve the image's versions.
 AIRFLOW_CONSTRAINTS := https://raw.githubusercontent.com/apache/airflow/constraints-3.2.2/constraints-3.13.txt
 
+TRANSFORM_DIR       := transform
+TRANSFORM_VENV      := $(TRANSFORM_DIR)/.venv
+# Same Python as the Airflow image, which will run dbt at step 3.5.
+TRANSFORM_PYTHON    := 3.13.13
+
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	helm-repos seaweedfs-up seaweedfs-down postgres-up postgres-down nessie-up nessie-down \
 	trino-up trino-down airflow-image airflow-image-import airflow-up airflow-down smoke-test \
-	rest-catalog-test screenshots ingestion-test
+	rest-catalog-test screenshots ingestion-test transform-lock dbt
 
 VENV                := .venv
 # Browsers downloaded by Playwright stay inside the project virtual environment.
@@ -222,3 +227,20 @@ $(INGESTION_VENV)/bin/pytest: $(INGESTION_DIR)/pyproject.toml
 ## Run the ingestion unit tests (no network access: HTTP calls are mocked).
 ingestion-test: $(INGESTION_VENV)/bin/pytest
 	cd $(INGESTION_DIR) && .venv/bin/pytest
+
+## Pin every dbt dependency, transitive ones included, from transform/requirements.in.
+## Releases newer than 14 days are ignored, so that every pin is at least two weeks old.
+transform-lock:
+	uv pip compile $(TRANSFORM_DIR)/requirements.in --python-version 3.13 \
+		--exclude-newer $$(date -u -d '14 days ago' +%Y-%m-%d) \
+		--output-file $(TRANSFORM_DIR)/requirements.txt
+
+## dbt virtual environment, installed exactly from the pinned requirements.txt.
+$(TRANSFORM_VENV)/bin/dbt: $(TRANSFORM_DIR)/requirements.txt
+	uv venv --clear --python $(TRANSFORM_PYTHON) $(TRANSFORM_VENV)
+	uv pip sync --python $(TRANSFORM_VENV)/bin/python $(TRANSFORM_DIR)/requirements.txt
+	touch $@
+
+## Run a dbt command against the cluster's Trino, e.g. make dbt ARGS="debug".
+dbt: check-kubeconfig $(TRANSFORM_VENV)/bin/dbt
+	bash $(TRANSFORM_DIR)/run.sh $(ARGS)
