@@ -9,7 +9,11 @@ history from January 2012.
   starts at 2011-12-31 23:00 UTC.
 - One run at a time: parallel runs would commit to the same table at the same
   time and conflict in Nessie.
-- A month the history does not contain yet is skipped without writing.
+- A month the history does not contain yet writes nothing: the task ends as
+  skipped.
+- Each load that writes rows updates the Asset of the bronze table, which
+  triggers the dbt DAG (dbt_transformations). A skipped task emits no Asset
+  event, so an empty month does not rebuild silver and gold for nothing.
 
 The logic lives in the wattlake_ingestion package, tested without Airflow.
 The Iceberg catalog "wattlake" is configured by PYICEBERG_CATALOG__WATTLAKE__*
@@ -19,10 +23,13 @@ environment variables (infra/airflow/values.yaml).
 from datetime import timedelta
 
 import pendulum
-from airflow.sdk import dag, get_current_context, task
+from airflow.exceptions import AirflowSkipException
+from airflow.sdk import Asset, dag, get_current_context, task
 from airflow.timetables.interval import CronDataIntervalTimetable
+from wattlake_ingestion.lakehouse import BRONZE_TABLE, BRONZE_TABLE_URI
 
 PARIS = pendulum.timezone("Europe/Paris")
+BRONZE = Asset(name=BRONZE_TABLE, uri=BRONZE_TABLE_URI)
 
 
 @dag(
@@ -38,7 +45,7 @@ PARIS = pendulum.timezone("Europe/Paris")
     doc_md=__doc__,
 )
 def eco2mix_history_to_bronze() -> None:
-    @task
+    @task(outlets=[BRONZE])
     def load_month() -> int:
         # Imported here rather than at the top of the file: the dag-processor
         # parses this file often, and only the task needs these libraries.
@@ -48,7 +55,7 @@ def eco2mix_history_to_bronze() -> None:
         from pathlib import Path
 
         from pyiceberg.catalog import load_catalog
-        from wattlake_ingestion.bronze import BRONZE_TABLE, load_export_file
+        from wattlake_ingestion.bronze import load_export_file
         from wattlake_ingestion.odre import HISTORY_DATASET, OdreClient
 
         context = get_current_context()
@@ -62,10 +69,10 @@ def eco2mix_history_to_bronze() -> None:
                 load_catalog("wattlake"), export, HISTORY_DATASET, start, end, datetime.now(UTC)
             )
 
-        if written:
-            logging.info("%s: %d rows written for [%s, %s)", BRONZE_TABLE, written, start, end)
-        else:
-            logging.info("%s: nothing to load for [%s, %s), table left unchanged", BRONZE_TABLE, start, end)
+        if not written:
+            # Skipped rather than successful: no Asset event, so dbt is not triggered.
+            raise AirflowSkipException(f"{BRONZE_TABLE}: nothing to load for [{start}, {end}), table left unchanged")
+        logging.info("%s: %d rows written for [%s, %s)", BRONZE_TABLE, written, start, end)
         return written
 
     load_month()

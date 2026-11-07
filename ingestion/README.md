@@ -44,6 +44,16 @@ Le DAG ([dags/eco2mix_history_to_bronze.py](dags/eco2mix_history_to_bronze.py)) 
 - **Mois en heure de Paris**, comme RTE les publie : janvier 2012 commence le 31 décembre 2011 à 23:00 UTC.
 - **Une exécution à la fois** : deux mois écrits en même temps dans la table entreraient en conflit dans Nessie.
 - **Une seule tâche par mois** : téléchargement de l'export, puis chargement dans bronze, avec deux nouvelles tentatives.
+- **Asset de la table bronze** : chaque chargement qui écrit des lignes met à jour l'Asset `bronze.eco2mix_national_history`, ce qui déclenche le DAG `dbt_transformations`. Un mois vide termine la tâche à l'état « skipped » : aucun événement n'est émis, et dbt n'est pas relancé pour rien.
+
+## DAG `dbt_transformations`
+
+Le DAG ([dags/dbt_transformations.py](dags/dbt_transformations.py)) construit les couches silver et gold avec un `dbt build`, qui lance aussi les tests. Il est planifié sur l'Asset de la table bronze, et non sur un horaire : il ne tourne que lorsque bronze a changé. Pendant un rattrapage, les événements accumulés sont consommés par une seule exécution.
+
+- **dbt isolé** : dbt tourne dans son propre environnement virtuel de l'image (`/opt/dbt/venv`), installé depuis `transform/requirements.txt`. Ses versions figées diffèrent des contraintes d'Airflow pour 26 paquets communs : les deux ne peuvent pas partager un environnement.
+- **Projet dbt dans l'image** : le projet et ses paquets (`dbt deps`, exécuté à la construction) sont copiés dans `/opt/wattlake/transform`. Les fichiers produits par dbt (`target/`, `logs/`) vont dans `/tmp/dbt`.
+- **Même profil qu'en local** : la tâche fixe `TRINO_HOST` et `TRINO_PORT` sur le service Trino du cluster.
+- Le nom et l'URI de l'Asset sont définis dans `wattlake_ingestion.lakehouse`, module sans import lourd, que les deux DAG importent.
 
 Le catalogue `wattlake` est configuré par les variables d'environnement `PYICEBERG_CATALOG__WATTLAKE__*`, définies dans `infra/airflow/values.yaml`.
 

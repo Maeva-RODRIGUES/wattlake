@@ -29,7 +29,7 @@ AIRFLOW_VALUES      := infra/airflow/values.yaml
 # Custom Airflow image (ingestion/Dockerfile). Bump the tag whenever the image
 # changes: with the same tag, Helm sees no change and keeps the running pods.
 AIRFLOW_IMAGE_REPO  := wattlake-airflow
-AIRFLOW_IMAGE_TAG   := 0.2.0
+AIRFLOW_IMAGE_TAG   := 0.3.0
 AIRFLOW_IMAGE       := $(AIRFLOW_IMAGE_REPO):$(AIRFLOW_IMAGE_TAG)
 
 INGESTION_DIR       := ingestion
@@ -184,9 +184,10 @@ airflow-up: check-kubeconfig check-helm-env helm-repos airflow-image-import
 		--wait --timeout 10m
 	kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) get pods
 
-## Build the custom Airflow image (official image, ingestion package, DAGs).
+## Build the custom Airflow image (official image, ingestion package, dbt in its
+## own virtual environment, dbt project, DAGs). Context: the repository root.
 airflow-image:
-	docker build --tag $(AIRFLOW_IMAGE) $(INGESTION_DIR)
+	docker build --file $(INGESTION_DIR)/Dockerfile --tag $(AIRFLOW_IMAGE) .
 
 ## Load the custom Airflow image into the k3d nodes (no registry involved).
 airflow-image-import: check-kubeconfig airflow-image

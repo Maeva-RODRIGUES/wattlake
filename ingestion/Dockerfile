@@ -1,6 +1,7 @@
-# Airflow image for WattLake: the official image plus the ingestion code and its
-# dependencies. Built by "make airflow-image", loaded into k3d by "make airflow-image-import".
-# Build context: the ingestion/ directory.
+# Airflow image for WattLake: the official image plus the ingestion code, the
+# dbt project and the DAGs. Built by "make airflow-image" from the repository
+# root (build context "."), loaded into k3d by "make airflow-image-import".
+# Files sent to the build: see Dockerfile.dockerignore next to this file.
 
 # Tag for readability, digest for reproducibility: a tag can be rebuilt upstream,
 # the digest always designates the image that was tested.
@@ -12,8 +13,9 @@ FROM apache/airflow:3.2.2-python3.13@sha256:bef4d135ec7b64658cf64089973edd62cab8
 # PyIceberg and s3fs included; the constraints apply to them and to theirs.
 ARG AIRFLOW_CONSTRAINTS=https://raw.githubusercontent.com/apache/airflow/constraints-3.2.2/constraints-3.13.txt
 
-COPY --chown=airflow:0 pyproject.toml /opt/wattlake/ingestion/pyproject.toml
-COPY --chown=airflow:0 src /opt/wattlake/ingestion/src
+# 1. Ingestion package, in Airflow's own environment.
+COPY --chown=airflow:0 ingestion/pyproject.toml /opt/wattlake/ingestion/pyproject.toml
+COPY --chown=airflow:0 ingestion/src /opt/wattlake/ingestion/src
 
 # apache-airflow is listed again so that pip can never upgrade it while
 # resolving the other packages. The ingestion package is installed as a regular
@@ -24,4 +26,27 @@ RUN pip install --no-cache-dir \
         "apache-airflow==3.2.2" \
         /opt/wattlake/ingestion
 
-COPY --chown=airflow:0 dags /opt/airflow/dags
+# 2. dbt, in a virtual environment of its own. Its pinned dependencies
+# (transform/requirements.txt) differ from the Airflow constraints for 26
+# shared packages: installing it next to Airflow would break one or the other.
+USER root
+RUN mkdir -p /opt/dbt && chown airflow:0 /opt/dbt
+USER airflow
+COPY --chown=airflow:0 transform/requirements.txt /opt/dbt/requirements.txt
+# The base image sets PIP_USER=true for Airflow's environment; it must be off
+# inside a virtual environment.
+RUN python -m venv /opt/dbt/venv \
+    && PIP_USER=false /opt/dbt/venv/bin/pip install --no-cache-dir --requirement /opt/dbt/requirements.txt
+
+# 3. dbt project, with its packages (dbt_utils) installed at build time rather
+# than downloaded at every run.
+COPY --chown=airflow:0 transform/dbt_project.yml transform/profiles.yml transform/packages.yml transform/package-lock.yml /opt/wattlake/transform/
+COPY --chown=airflow:0 transform/models /opt/wattlake/transform/models
+COPY --chown=airflow:0 transform/macros /opt/wattlake/transform/macros
+COPY --chown=airflow:0 transform/tests /opt/wattlake/transform/tests
+RUN /opt/dbt/venv/bin/dbt deps \
+        --project-dir /opt/wattlake/transform --profiles-dir /opt/wattlake/transform \
+        --log-path /tmp/dbt/logs
+
+# 4. DAGs.
+COPY --chown=airflow:0 ingestion/dags /opt/airflow/dags

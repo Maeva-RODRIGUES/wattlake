@@ -16,6 +16,15 @@ La cible crée au besoin `transform/.venv` avec [uv](https://docs.astral.sh/uv/)
 - **Source** : la table bronze est déclarée dans [models/bronze/sources.yml](models/bronze/sources.yml). Ses particularités, dont les 60 lignes artificielles du passage à l'heure d'été, sont décrites dans [docs/sources.md](../docs/sources.md).
 - **Statistiques d'usage désactivées** (`send_anonymous_usage_stats: false`), et vérification des certificats activée dès maintenant (`require_certificate_validation: true`). `dbt debug` affiche encore l'avertissement sur les certificats, car il teste la connexion avant de lire les réglages du projet. Les autres commandes ne l'affichent plus.
 
+## Exécution par Airflow
+
+Dans le cluster, le DAG `dbt_transformations` lance `dbt build` chaque fois que la table bronze change (voir [ingestion/README.md](../ingestion/README.md)). L'image Airflow contient :
+
+- un environnement virtuel dbt dédié, `/opt/dbt/venv`, installé depuis [requirements.txt](requirements.txt), séparé de celui d'Airflow dont les contraintes diffèrent pour 26 paquets communs ;
+- ce projet, dans `/opt/wattlake/transform`, avec `dbt_utils` déjà installé par `dbt deps` à la construction de l'image.
+
+Une modification du projet dbt n'arrive dans Airflow qu'après reconstruction de l'image : incrémenter `AIRFLOW_IMAGE_TAG` dans le `Makefile`, puis `make airflow-up`.
+
 ## Versions
 
 | Paquet | Version | Raison |

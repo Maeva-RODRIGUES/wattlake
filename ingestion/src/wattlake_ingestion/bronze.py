@@ -24,8 +24,9 @@ from pyiceberg.exceptions import NoSuchTableError
 from pyiceberg.expressions import And, GreaterThanOrEqual, LessThan
 from pyiceberg.table import Table
 
-BRONZE_NAMESPACE = "bronze"
-BRONZE_TABLE = f"{BRONZE_NAMESPACE}.eco2mix_national_history"
+# Defined in lakehouse.py, which the DAGs import at parse time, and re-exported
+# here for the callers of this module.
+from wattlake_ingestion.lakehouse import BRONZE_NAMESPACE, BRONZE_TABLE
 
 _TEXT_FIELDS = ["perimetre", "nature", "date", "heure"]
 # Numeric fields that the source declares as text (see docs/sources.md).

@@ -1,0 +1,18 @@
+# Build context of ingestion/Dockerfile is the repository root: send only what
+# the Dockerfile copies. BuildKit reads this file because it sits next to the
+# Dockerfile and is named after it.
+*
+!ingestion/pyproject.toml
+!ingestion/src
+!ingestion/dags
+!transform/requirements.txt
+!transform/dbt_project.yml
+!transform/profiles.yml
+!transform/packages.yml
+!transform/package-lock.yml
+!transform/models
+!transform/macros
+!transform/tests
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
