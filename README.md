@@ -49,7 +49,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | Transformations | dbt (adaptateur Trino) | Construit les couches silver et gold, avec des tests |
 | Orchestration | Airflow | Planifie l'ingestion batch et lance dbt chaque fois que bronze change |
 | Streaming | Kafka (à venir) | Transportera les mises à jour en temps réel |
-| Déploiement | Kubernetes, Helm, puis Argo CD et une CI (choix documenté dans l'ADR 005) | Rend la stack reproductible, puis déployée en GitOps |
+| Déploiement | Kubernetes, Helm, puis GitHub Actions (ADR 005) et Argo CD, à venir | Rend la stack reproductible, puis testée et déployée en GitOps |
 
 ## Feuille de route
 
@@ -180,6 +180,7 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 002 : API utilisée pour accéder au catalogue Nessie](docs/adr/002-api-catalogue-nessie.md), ou pourquoi l'API native de Nessie plutôt que son catalogue REST Iceberg.
 - [ADR 003 : base de métadonnées d'Airflow](docs/adr/003-base-metadonnees-airflow.md), ou pourquoi une image PostgreSQL officielle plutôt que celle embarquée par le chart.
 - [ADR 004 : catalogue REST Iceberg pour l'ingestion](docs/adr/004-catalogue-rest-ingestion.md), qui remplace l'ADR 002 : pourquoi PyIceberg écrit par le catalogue REST de Nessie avec ses propres clés S3, pendant que Trino reste sur l'API native.
+- [ADR 005 : plateforme d'intégration continue](docs/adr/005-integration-continue.md), ou pourquoi GitHub Actions plutôt que GitLab CI, dont la CI pour un dépôt GitHub est réservée aux offres payantes.
 
 ## Ce que je ferais en production
 
