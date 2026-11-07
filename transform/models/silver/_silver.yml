@@ -38,46 +38,95 @@ models:
       - name: local_date
         description: Date in Paris time, for daily aggregation in the French calendar.
         meta: {source_field: date}
+        data_tests:
+          - not_null
       - name: data_status
         description: "Data status: definitive (until 2025-12-31) or consolidated (2026), real_time for the real-time dataset."
         meta: {source_field: nature}
+        data_tests:
+          - not_null
+          # The history only holds these two statuses. Real-time data, or an
+          # unmapped label (null after the CASE), must stop the build.
+          - accepted_values:
+              arguments:
+                values: [definitive, consolidated]
 
       # Consumption and forecasts
       - name: consumption_mw
         description: Realised consumption, average power in MW over 30 minutes. Energy = value * 0.5 h.
         meta: &half_hour_power {unit: MW, quantity: average_power, publication_step: 30min, energy_mwh: "value * 0.5", source_field: consommation}
+        data_tests:
+          # Published at every half hour. Single known gap: 2026-01-01 00:00
+          # Paris time, missing at the source (realised values all null).
+          - not_null:
+              config:
+                where: "minute(timestamp_utc) in (0, 30) and timestamp_utc <> timestamp '2025-12-31 23:00:00 UTC'"
+          # Observed range 29,124 to 102,098 MW (2012-2026). Wide bounds: they
+          # catch a unit error (kW instead of MW), not a cold winter.
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 20000
+                max_value: 120000
       - name: consumption_forecast_day_ahead_mw
         description: Consumption forecast made the day before, power in MW every 15 minutes. Forecast energy = value * 0.25 h.
         meta: {unit: MW, quantity: forecast_power, publication_step: 15min, energy_mwh: "value * 0.25", source_field: prevision_j1}
+        data_tests:
+          - not_null
       - name: consumption_forecast_intraday_mw
         description: Consumption forecast updated the same day, power in MW every 15 minutes. Forecast energy = value * 0.25 h.
         meta: {unit: MW, quantity: forecast_power, publication_step: 15min, energy_mwh: "value * 0.25", source_field: prevision_j}
+        data_tests:
+          - not_null
 
-      # Production by source
+      # Production by source. Never negative, except solar, coal and
+      # pumped-storage turbining, see their tests.
       - name: nuclear_mw
         description: Nuclear production, average power in MW over 30 minutes. Energy = value * 0.5 h.
         meta: {<<: *half_hour_power, source_field: nucleaire}
+        data_tests: &non_negative
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
       - name: wind_mw
         description: Wind production, average power in MW over 30 minutes. Energy = value * 0.5 h.
         meta: {<<: *half_hour_power, source_field: eolien}
+        data_tests: *non_negative
       - name: solar_mw
-        description: Solar production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        description: >
+          Solar production, average power in MW over 30 minutes. Energy = value
+          * 0.5 h. Slightly negative at times between 2013 and 2020 (minimum
+          -23 MW), most likely the auxiliary consumption of plants at night.
         meta: {<<: *half_hour_power, source_field: solaire}
+        data_tests: &small_negative_allowed
+          # Observed minimum -133 MW (coal), only from 2012 to 2020: auxiliary
+          # consumption of idle plants. A larger negative value means a sign
+          # or unit error at the source.
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: -200
       - name: hydro_mw
         description: Hydro production, average power in MW over 30 minutes. Energy = value * 0.5 h.
         meta: {<<: *half_hour_power, source_field: hydraulique}
+        data_tests: *non_negative
       - name: bioenergy_mw
         description: Bioenergy production, average power in MW over 30 minutes. Energy = value * 0.5 h.
         meta: {<<: *half_hour_power, source_field: bioenergies}
+        data_tests: *non_negative
       - name: gas_mw
         description: Gas production, average power in MW over 30 minutes. Energy = value * 0.5 h.
         meta: {<<: *half_hour_power, source_field: gaz}
+        data_tests: *non_negative
       - name: coal_mw
-        description: Coal production, average power in MW over 30 minutes. Energy = value * 0.5 h.
+        description: >
+          Coal production, average power in MW over 30 minutes. Energy = value
+          * 0.5 h. Negative at times between 2012 and 2020 (minimum -133 MW),
+          most likely the auxiliary consumption of idle plants.
         meta: {<<: *half_hour_power, source_field: charbon}
+        data_tests: *small_negative_allowed
       - name: fuel_oil_mw
         description: Fuel oil production, average power in MW over 30 minutes. Energy = value * 0.5 h.
         meta: {<<: *half_hour_power, source_field: fioul}
+        data_tests: *non_negative
 
       # Production detail by technology: published from 2013-01-01 only, null in 2012
       - name: hydro_run_of_river_mw
@@ -87,8 +136,11 @@ models:
         description: Reservoir hydro, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
         meta: {<<: *half_hour_detail, source_field: hydraulique_lacs}
       - name: hydro_pumped_storage_generation_mw
-        description: Pumped-storage turbining, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
+        description: >
+          Pumped-storage turbining, average power in MW over 30 minutes, from
+          2013. Energy = value * 0.5 h. Down to -2 MW at times (2013-2020).
         meta: {<<: *half_hour_detail, source_field: hydraulique_step_turbinage}
+        data_tests: *small_negative_allowed
       - name: bioenergy_waste_mw
         description: Waste bioenergy, average power in MW over 30 minutes, from 2013. Energy = value * 0.5 h.
         meta: {<<: *half_hour_detail, source_field: bioenergies_dechets}
@@ -127,6 +179,12 @@ models:
           average power in MW over 30 minutes. Energy = value * 0.5 h (negative).
           Do not add it to production totals.
         meta: {<<: *half_hour_power, sign: negative, source_field: pompage}
+        data_tests:
+          # A consumption, stored as negative values (observed maximum -1 MW).
+          # A positive value would mean a sign change at the source.
+          - dbt_utils.accepted_range:
+              arguments:
+                max_value: 0
 
       # Exchanges: negative means France exports, positive means it imports
       - name: physical_exchange_balance_mw
@@ -162,11 +220,41 @@ models:
           summed. Average it over a period weighted by the production energy
           of each step.
         meta: {unit: g/kWh, quantity: intensity, publication_step: 30min, energy_mwh: "not applicable", source_field: taux_co2}
+        data_tests:
+          # Observed range 5 to 141 g/kWh. The bounds catch a unit error
+          # (kg/MWh is the same value, g/MWh would be a thousand times higher).
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 500
 
       # Lineage
       - name: source_dataset
         description: ODRE dataset the row was loaded from.
         meta: {source_field: _source_dataset}
+        data_tests:
+          - not_null
       - name: ingested_at
         description: Time of the bronze load that wrote the row (UTC).
         meta: {source_field: _ingested_at}
+        data_tests:
+          - not_null
+
+# Unit tests: the model's SQL run on mocked input rows, without reading bronze.
+unit_tests:
+  - name: drops_spring_artefacts_and_maps_nd_to_null
+    description: >
+      On 2012-03-25 the source publishes local 02:30, which does not exist,
+      with the same date_heure as the real 03:30 row. The model must keep 03:30
+      only, and turn the text value "ND" into null.
+    model: eco2mix_national
+    given:
+      - input: source('bronze', 'eco2mix_national_history')
+        rows:
+          - {date_heure: "2012-03-25 00:30:00 UTC", date: "2012-03-25", heure: "01:30", nature: "Données définitives", consommation: 47196, gaz_cogen: "-3170"}
+          - {date_heure: "2012-03-25 01:30:00 UTC", date: "2012-03-25", heure: "02:30", nature: "Données définitives", consommation: 47196, gaz_cogen: "ND"}
+          - {date_heure: "2012-03-25 01:30:00 UTC", date: "2012-03-25", heure: "03:30", nature: "Données définitives", consommation: 46383, gaz_cogen: "ND"}
+    expect:
+      rows:
+        - {timestamp_utc: "2012-03-25 00:30:00 UTC", data_status: definitive, consumption_mw: 47196, gas_cogeneration_mw: -3170}
+        - {timestamp_utc: "2012-03-25 01:30:00 UTC", data_status: definitive, consumption_mw: 46383, gas_cogeneration_mw: null}

@@ -1,0 +1,6 @@
+# dbt packages, installed into dbt_packages/ by "make dbt ARGS=deps".
+# The resolved versions are frozen in package-lock.yml.
+packages:
+  # 1.4.1 (2026-06-28): requires dbt >=1.3.0,<3.0.0.
+  - package: dbt-labs/dbt_utils
+    version: 1.4.1

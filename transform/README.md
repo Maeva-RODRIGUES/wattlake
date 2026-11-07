@@ -66,6 +66,17 @@ Points de conception :
 
 Contrôle croisé avec le Bilan électrique 2024 de RTE (chiffres provisionnels) : production 537,6 TWh contre 536,5, renouvelables au sens strict 148,0 TWh contre 148, éolien 46,8 contre 46,6. Le solaire (24,5 TWh contre 23,3) reste un écart de 5 % non expliqué.
 
+## Tests
+
+`make dbt ARGS="build"` construit chaque modèle puis lance ses tests : un test en échec arrête les modèles qui en dépendent.
+
+- **Paquet `dbt_utils` 1.4.1**, déclaré dans [packages.yml](packages.yml) et figé dans [package-lock.yml](package-lock.yml). Il s'installe avec `make dbt ARGS="deps"`, dans `dbt_packages/` (ignoré par Git). À l'étape 3.5, il faudra l'installer au moment de construire l'image, pas à chaque exécution.
+- **Tests de données** (37), dans `_silver.yml` et `_gold.yml`, tous en sévérité `error`. Chaque seuil vient d'une mesure sur les données, rappelée en commentaire : pompage toujours ≤ 0, production ≥ 0 sauf solaire, charbon et turbinage des STEP (≥ -200 MW, consommations auxiliaires jusqu'en 2020), consommation entre 20 000 et 120 000 MW, intensité CO₂ entre 0 et 500 g/kWh, parts entre 0 et 1, part stricte ≤ part large et nulle exactement avant 2013, aucun jour manquant, production égale à la somme des huit filières.
+- **Tests SQL dédiés**, dans [tests/](tests/) : les journées incomplètes se limitent aux cas connus, et les sommes mensuelles égalent celles des jours.
+- **Tests unitaires** (2) : le SQL des modèles exécuté sur des lignes simulées, sans lire les tables. L'un vérifie qu'une ligne artificielle de mars est écartée et que `ND` devient `NULL`, l'autre que les parts sont des ratios de sommes (0,6 et non la moyenne 0,54) et que la part stricte vaut `NULL` sans détail par technologie. Pour vérifier qu'ils détectent une régression, on a retiré le filtre de dédoublonnage, puis forcé la part stricte inconnue à 0 : chaque erreur a fait échouer le test prévu.
+
+Non testé volontairement : l'égalité entre une filière et la somme de ses technologies, que la source ne respecte pas (particularité 9 de [docs/sources.md](../docs/sources.md)).
+
 Journées incomplètes : chaque dimanche de passage à l'heure d'hiver (la source omet l'une des deux heures répétées, voir la particularité 8 de [docs/sources.md](../docs/sources.md)) et le 1er janvier 2026.
 
 ## Dépendances : pourquoi `requirements.in` et `uv pip compile`

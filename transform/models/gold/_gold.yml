@@ -65,6 +65,27 @@ models:
       Daily energy mix of France in MWh, one row per day in Paris time
       (local_date), with the share of renewables in production for the day.
       Built from the half-hour rows of silver eco2mix_national.
+    data_tests:
+      # No missing day between the first and the last one.
+      - dbt_utils.sequential_values:
+          arguments:
+            column_name: local_date
+            interval: 1
+            datepart: day
+      # Total production is exactly the sum of the eight sources.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: >
+              abs(production_mwh - (nuclear_mwh + wind_mwh + solar_mwh + hydro_mwh
+              + bioenergy_mwh + gas_mwh + coal_mwh + fuel_oil_mwh)) <= 0.01
+      # The strict definition removes energy from the broad one, never adds any.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "renewable_share_strict <= renewable_share"
+      # The strict share is unknown (NULL) exactly before 2013, never 0.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(local_date < date '2013-01-01') = (renewable_share_strict is null)"
     columns:
       - name: local_date
         description: Day in Paris time. Unique.
@@ -73,6 +94,11 @@ models:
           - not_null
       - name: expected_half_hours
         description: Half hours in the day, 46 on the spring clock-change day, 50 in autumn, 48 otherwise.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [46, 48, 50]
+                quote: false
       - name: half_hours_with_data
         description: Half hours with a known production for all eight sources.
       - name: half_hours_with_detail
@@ -133,15 +159,28 @@ models:
       - name: renewable_share
         description: renewable_mwh / production_mwh, between 0 and 1. A ratio of energies, not an average of shares.
         meta: &share {unit: ratio, computed_as: "ratio of energy sums"}
+        data_tests: &between_zero_and_one
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
       - name: renewable_share_strict
         description: renewable_strict_mwh / production_with_detail_mwh, between 0 and 1. NULL in 2012 (unknown, not 0).
         meta: *share
+        data_tests: *between_zero_and_one
 
   - name: renewable_share_monthly
     description: >
       Monthly share of renewables in the production mix, one row per month in
       Paris time. Energies are the sums of the daily energies of
       energy_mix_daily, and shares are recomputed from these sums.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "renewable_share_strict <= renewable_share"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "(month < date '2013-01-01') = (renewable_share_strict is null)"
     columns:
       - name: month
         description: First day of the month, Paris time. Unique.
@@ -186,6 +225,30 @@ models:
       - name: renewable_share
         description: Broad share, ratio of the monthly energy sums.
         meta: *share
+        data_tests: *between_zero_and_one
       - name: renewable_share_strict
         description: Strict share, ratio of the monthly energy sums. NULL in 2012 (unknown, not 0).
         meta: *share
+        data_tests: *between_zero_and_one
+
+# Unit test: the model's SQL run on mocked silver rows, without reading silver.
+unit_tests:
+  - name: shares_are_ratios_of_energy_sums
+    description: >
+      Day 2012-06-01: two half hours with shares 0.25 (100 / 400 MW) and 0.833
+      (500 / 600 MW). The ratio of energy sums is 0.6, the average of the two
+      shares would be 0.54: the model must return 0.6. No technology detail in
+      2012, so the strict share is NULL. Day 2013-06-01: hydro 200 MW including
+      50 MW of pumped storage, bioenergy 100 MW including 40 MW of waste, wind
+      100 MW. Strict renewables = 100 + 150 + 80 = 330 MW out of 400 MW: 0.825.
+    model: energy_mix_daily
+    given:
+      - input: ref('eco2mix_national')
+        rows:
+          - {timestamp_utc: "2012-06-01 10:00:00 UTC", local_date: "2012-06-01", nuclear_mw: 300, wind_mw: 100, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0}
+          - {timestamp_utc: "2012-06-01 10:30:00 UTC", local_date: "2012-06-01", nuclear_mw: 100, wind_mw: 500, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0}
+          - {timestamp_utc: "2013-06-01 10:00:00 UTC", local_date: "2013-06-01", nuclear_mw: 0, wind_mw: 100, solar_mw: 0, hydro_mw: 200, bioenergy_mw: 100, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, hydro_pumped_storage_generation_mw: 50, bioenergy_waste_mw: 40}
+    expect:
+      rows:
+        - {local_date: "2012-06-01", production_mwh: 500, renewable_mwh: 300, renewable_share: 0.6, renewable_share_strict: null}
+        - {local_date: "2013-06-01", production_mwh: 200, renewable_mwh: 200, renewable_share: 1, renewable_share_strict: 0.825}
