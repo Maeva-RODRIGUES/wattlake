@@ -26,15 +26,18 @@ Ces captures sont générées par `make screenshots`.
 
 ```mermaid
 flowchart LR
-    API[API publique RTE] -->|historique| AF[Airflow]
-    API -->|temps réel| K[Kafka]
-    AF --> ICE[(Tables Iceberg<br/>stockage SeaweedFS S3)]
-    K --> ICE
-    NES[Nessie<br/>catalogue versionné] --- ICE
-    ICE --> TR[Trino + dbt<br/>couches silver et gold]
+    API[API publique RTE<br/>éCO2mix] -->|export Parquet, mois par mois| AF[Airflow<br/>DAG bronze]
+    AF -->|PyIceberg,<br/>catalogue REST| BR[(bronze)]
+    BR -.->|Asset : déclenche| DBT[Airflow<br/>DAG dbt]
+    DBT -->|dbt build sur Trino,<br/>API native Nessie| SG[(silver, gold<br/>+ 44 tests)]
+    NES[Nessie<br/>catalogue versionné] --- BR
+    NES --- SG
+    S3[SeaweedFS<br/>stockage S3] --- BR
+    S3 --- SG
+    API -.->|temps réel, étape 5| K[Kafka]
 ```
 
-Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Helm et, à terme, synchronisée depuis ce dépôt par Argo CD.
+Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Helm et, à terme, synchronisée depuis ce dépôt par Argo CD. Les tables sont au format Iceberg. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt, qui reconstruit silver et gold sur Trino et lance les tests. Kafka, en pointillés, est prévu pour le temps réel.
 
 | Brique | Outil | Rôle |
 | --- | --- | --- |
@@ -42,10 +45,11 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | Format de table | Apache Iceberg | Organise les fichiers en tables (schéma, partitions, snapshots) |
 | Catalogue | Nessie | Versionne l'état des tables, avec des branches comme Git |
 | Moteur de requêtes | Trino | Exécute le SQL sur les tables Iceberg |
+| Ingestion | Python, PyIceberg | Télécharge les exports de l'API et les écrit dans bronze, un commit par mois |
 | Transformations | dbt (adaptateur Trino) | Construit les couches silver et gold, avec des tests |
-| Orchestration | Airflow | Planifie l'ingestion batch |
-| Streaming | Kafka | Transporte les mises à jour en temps réel |
-| Déploiement | Kubernetes, Helm, Argo CD, GitLab CI | Rend la stack reproductible et déployée en GitOps |
+| Orchestration | Airflow | Planifie l'ingestion batch et lance dbt chaque fois que bronze change |
+| Streaming | Kafka (à venir) | Transportera les mises à jour en temps réel |
+| Déploiement | Kubernetes, Helm, puis Argo CD et une CI (choix documenté dans l'ADR 005) | Rend la stack reproductible, puis déployée en GitOps |
 
 ## Feuille de route
 
@@ -57,7 +61,8 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 
 **Étape 2 : les transformations**
 - [x] Couches silver et gold avec dbt-trino
-- [ ] Tests de qualité des données dans dbt
+- [x] Tests de qualité des données dans dbt
+- [x] dbt lancé par Airflow chaque fois que la couche bronze change
 
 **Étape 3 : DataOps**
 - [ ] Intégration continue (choix documenté dans l'ADR 005) : lint, tests Python, tests dbt, construction des images
@@ -115,6 +120,19 @@ Le smoke test crée une table Iceberg depuis Trino, la relit, vérifie que ses f
 ==> Smoke test passed
 ```
 
+### Charger les données et lancer les transformations
+
+Sur un cluster neuf, les deux DAG d'Airflow sont en pause, comme tout nouveau DAG. Les activer lance la chaîne complète :
+
+```bash
+kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
+  airflow dags unpause dbt_transformations
+kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
+  airflow dags unpause eco2mix_history_to_bronze
+```
+
+Le DAG `eco2mix_history_to_bronze` rattrape alors l'historique mois par mois depuis janvier 2012, en quelques minutes. Chaque mois chargé met à jour l'Asset de la table bronze, ce qui déclenche `dbt_transformations` : silver et gold sont reconstruites et les tests lancés. Les détails sont dans [ingestion/README.md](ingestion/README.md) et [transform/README.md](transform/README.md).
+
 ### Interroger la stack
 
 ```bash
@@ -124,6 +142,16 @@ kubectl --context k3d-wattlake -n wattlake exec -it deploy/trino-coordinator -- 
 # Interfaces web, chacune dans son terminal
 kubectl --context k3d-wattlake -n wattlake port-forward svc/trino 8080:8080     # Trino : http://127.0.0.1:8080
 kubectl --context k3d-wattlake -n wattlake port-forward svc/nessie 19120:19120  # Nessie : http://127.0.0.1:19120
+kubectl --context k3d-wattlake -n wattlake port-forward svc/airflow-api-server 8081:8080  # Airflow : http://127.0.0.1:8081 (admin / admin-dev)
+```
+
+Une fois la chaîne passée, la part des renouvelables se lit dans la couche gold :
+
+```sql
+SELECT year(month) AS annee,
+       round(sum(renewable_strict_mwh) / sum(production_with_detail_mwh), 3) AS part_renouvelable
+FROM iceberg.gold.renewable_share_monthly
+GROUP BY 1 ORDER BY 1;
 ```
 
 ### Régénérer les captures
