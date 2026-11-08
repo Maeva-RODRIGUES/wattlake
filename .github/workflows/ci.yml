@@ -1,0 +1,77 @@
+# Continuous integration (see docs/adr/005-integration-continue.md).
+# Every job calls a Makefile target: the same commands run locally and in CI.
+# Third-party actions are pinned to a full commit SHA, the release in comment.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege by default; only the image job may write packages.
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its previous run; runs on main all complete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Same uv as the local prerequisites (README.md).
+  UV_VERSION: "0.11.19"
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: make lint
+
+  ingestion-tests:
+    name: Ingestion unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: make ingestion-test
+
+  dbt-parse:
+    name: dbt parse
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: make dbt-parse
+
+  airflow-image:
+    name: Airflow image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Image name
+        # Container image names must be lowercase; the owner name is not.
+        run: echo "IMAGE_REPO=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wattlake-airflow" >> "$GITHUB_ENV"
+      - name: Build
+        run: make airflow-image AIRFLOW_IMAGE_REPO="$IMAGE_REPO" AIRFLOW_IMAGE_TAG="$GITHUB_SHA"
+      - name: Publish to ghcr.io (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # docker login with the workflow token: no third-party action needed.
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE_REPO:$GITHUB_SHA"
+          docker tag "$IMAGE_REPO:$GITHUB_SHA" "$IMAGE_REPO:main"
+          docker push "$IMAGE_REPO:main"

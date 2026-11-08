@@ -112,9 +112,7 @@ class OdreClient:
                             return dest
                         if response.status_code not in RETRYABLE_STATUS_CODES:
                             response.read()
-                            raise OdreError(
-                                f"{dataset_id}: HTTP {response.status_code}: {response.text[:200]}"
-                            )
+                            raise OdreError(f"{dataset_id}: HTTP {response.status_code}: {response.text[:200]}")
                         failure = f"HTTP {response.status_code}"
                         delay = self._retry_delay(attempt, response.headers.get("Retry-After"))
                 except httpx.TransportError as exc:

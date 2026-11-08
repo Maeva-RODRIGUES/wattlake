@@ -18,6 +18,7 @@ from datetime import timedelta
 import pendulum
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import Asset, dag
+
 from wattlake_ingestion.lakehouse import BRONZE_TABLE, BRONZE_TABLE_URI
 
 BRONZE = Asset(name=BRONZE_TABLE, uri=BRONZE_TABLE_URI)

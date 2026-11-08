@@ -25,12 +25,18 @@ Dans le cluster, le DAG `dbt_transformations` lance `dbt build` chaque fois que 
 
 Une modification du projet dbt n'arrive dans Airflow qu'après reconstruction de l'image : incrémenter `AIRFLOW_IMAGE_TAG` dans le `Makefile`, puis `make airflow-up`.
 
+## Intégration continue
+
+La CI lance `make dbt-parse` : `dbt deps` puis `dbt parse`, sans base de données. Cela valide le YAML, le Jinja, les références entre modèles et la définition des tests. `dbt compile`, `dbt build` et les tests unitaires dbt ouvrent une connexion à Trino : ils tournent dans le cluster, pas en CI.
+
 ## Versions
 
 | Paquet | Version | Raison |
 | --- | --- | --- |
 | `dbt-core` | 1.12.6 | Seule version 1.x en support actif, jusqu'au 15 juillet 2027. La 1.10 est dépréciée, et la 1.11 est en support critique jusqu'au 18 décembre 2026 |
 | `dbt-trino` | 1.10.6 | Dernière version publiée depuis plus de deux semaines. La 1.11.0 date du 26 octobre 2026 |
+
+**Installation dépendante de github.com** : dbt-core 1.12 dépend de `dbt-core-experimental-parser` (2.0.8), publié sur PyPI uniquement sous forme de sources. Son installation télécharge un binaire depuis les releases GitHub de dbt-labs. Une installation de dbt, et donc la construction de l'image Airflow, échoue si github.com ne répond pas (constaté une fois : délai dépassé, réussite au deuxième essai).
 
 Depuis dbt 1.8, dbt-core et les adaptateurs sont publiés séparément et communiquent par le paquet `dbt-adapters` : leurs versions mineures n'ont plus à correspondre. dbt-trino 1.10.6 déclare accepter `dbt-core>=1.8,<2.0`.
 

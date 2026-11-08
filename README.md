@@ -1,5 +1,7 @@
 # WattLake
 
+[![CI](https://github.com/Maeva-RODRIGUES/wattlake/actions/workflows/ci.yml/badge.svg)](https://github.com/Maeva-RODRIGUES/wattlake/actions/workflows/ci.yml)
+
 Plateforme Lakehouse open source construite sur les données publiques du mix électrique français (RTE, éCO2mix).
 
 > **Projet en cours**, démarré en novembre 2026. La feuille de route ci-dessous indique ce qui fonctionne déjà et ce qui reste à construire.
@@ -49,7 +51,8 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | Transformations | dbt (adaptateur Trino) | Construit les couches silver et gold, avec des tests |
 | Orchestration | Airflow | Planifie l'ingestion batch et lance dbt chaque fois que bronze change |
 | Streaming | Kafka (à venir) | Transportera les mises à jour en temps réel |
-| Déploiement | Kubernetes, Helm, puis GitHub Actions (ADR 005) et Argo CD, à venir | Rend la stack reproductible, puis testée et déployée en GitOps |
+| Intégration continue | GitHub Actions, Dependabot (ADR 005) | Vérifie le code à chaque modification et publie l'image Airflow |
+| Déploiement | Kubernetes, Helm, puis Argo CD (à venir) | Rend la stack reproductible, puis déployée en GitOps |
 
 ## Feuille de route
 
@@ -65,7 +68,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 - [x] dbt lancé par Airflow chaque fois que la couche bronze change
 
 **Étape 3 : DataOps**
-- [ ] Intégration continue (choix documenté dans l'ADR 005) : lint, tests Python, tests dbt, construction des images
+- [x] Intégration continue avec GitHub Actions (ADR 005) : lint, tests Python, validation dbt, construction et publication de l'image Airflow
 - [ ] Déploiement GitOps avec Argo CD
 - [ ] Write-Audit-Publish : écriture sur une branche Nessie, contrôles qualité, puis fusion dans `main`
 - [ ] Identifiants déplacés dans des Secrets Kubernetes
@@ -161,6 +164,31 @@ make screenshots     # smoke test, puis captures de Nessie et Trino dans docs/im
 ```
 
 Au premier lancement, la cible crée un environnement virtuel `.venv` dans le projet et y installe Playwright et un Chromium headless (environ 450 Mo). Rien n'est installé en dehors du projet : supprimer `.venv` suffit à tout retirer.
+
+### Intégration continue
+
+Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) tourne sur chaque pull request et chaque push sur `main`. Ses quatre jobs appellent les mêmes cibles qu'en local :
+
+```bash
+make lint             # ruff : style et erreurs du code Python (configuration : ruff.toml)
+make ingestion-test   # tests unitaires de l'ingestion, sans réseau
+make dbt-parse        # validation du projet dbt, sans base de données
+make airflow-image    # construction de l'image Airflow
+```
+
+Sur `main`, l'image est publiée sur `ghcr.io/maeva-rodrigues/wattlake-airflow`, avec le SHA du commit comme tag. Les actions tierces sont épinglées par SHA, et les permissions réduites au minimum.
+
+`dbt build` et les tests unitaires dbt ne tournent pas en CI : ils demandent Trino et la table bronze. Ils tournent dans le cluster, avec `make dbt ARGS="build"` ou le DAG `dbt_transformations`.
+
+### Mettre à jour les versions
+
+Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) propose chaque semaine les mises à jour des actions, de l'image de base et des dépendances de l'ingestion, avec un délai de 14 jours après publication (règle des deux semaines). Les mises à jour de sécurité ne sont pas retardées.
+
+Dependabot ne voit pas le reste, qui se met à jour à la main, en vérifiant que chaque version a au moins deux semaines :
+
+- les charts Helm et la version de Python, dans le [`Makefile`](Makefile) ;
+- les tags d'images dans les fichiers de valeurs de [`infra/`](infra/) ;
+- les dépendances de dbt : modifier [`transform/requirements.in`](transform/requirements.in), puis `make transform-lock`, qui régénère `requirements.txt` en ignorant les versions de moins de 14 jours.
 
 ### Mettre en pause et supprimer
 

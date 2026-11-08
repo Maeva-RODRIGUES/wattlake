@@ -72,7 +72,8 @@ class TestPrepareBatch:
     def test_unexpected_or_missing_columns_are_rejected(self) -> None:
         rows = export_rows(AUGUST[0], 1).drop_columns(["taux_co2"]).append_column("new_field", pa.array([1]))
 
-        with pytest.raises(BronzeSchemaError, match=r"missing columns: \['taux_co2'\], unexpected columns: \['new_field'\]"):
+        expected = r"missing columns: \['taux_co2'\], unexpected columns: \['new_field'\]"
+        with pytest.raises(BronzeSchemaError, match=expected):
             prepare_batch(rows, DATASET, INGESTED_AT)
 
 

@@ -54,8 +54,7 @@ class TestPeriodFilter:
         paris = ZoneInfo("Europe/Paris")
         where = period_filter(datetime(2026, 8, 1, tzinfo=paris), datetime(2026, 8, 2, tzinfo=paris))
         assert where == (
-            "date_heure >= date'2026-07-31T22:00:00+00:00' "
-            "and date_heure < date'2026-08-01T22:00:00+00:00'"
+            "date_heure >= date'2026-07-31T22:00:00+00:00' and date_heure < date'2026-08-01T22:00:00+00:00'"
         )
 
     def test_naive_datetime_is_rejected(self) -> None:
@@ -109,9 +108,7 @@ class TestExportToFile:
 
         assert sleeps == [2.0]
 
-    def test_a_cut_download_is_restarted_from_scratch(
-        self, client: OdreClient, export: Route, dest: Path
-    ) -> None:
+    def test_a_cut_download_is_restarted_from_scratch(self, client: OdreClient, export: Route, dest: Path) -> None:
         export.side_effect = [httpx.Response(200, stream=BrokenStream()), httpx.Response(200, content=PAYLOAD)]
 
         client.export_to_file(HISTORY_DATASET, START, END, dest)

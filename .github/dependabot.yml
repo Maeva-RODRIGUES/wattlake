@@ -1,0 +1,28 @@
+# Dependency update pull requests (see docs/adr/005-integration-continue.md).
+# The cooldown applies the project's rule: a release is only adopted once it is
+# at least two weeks old. It does not delay security updates.
+# Not covered here, reviewed by hand (README.md, "Mettre à jour les versions"):
+# the Helm charts and Python version in the Makefile, the image tags in the
+# Helm values, and transform/requirements.txt (compiled by uv pip compile).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+
+  - package-ecosystem: docker
+    directory: /ingestion
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+
+  - package-ecosystem: pip
+    directory: /ingestion
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14

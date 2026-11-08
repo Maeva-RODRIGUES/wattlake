@@ -7,6 +7,9 @@
 # the digest always designates the image that was tested.
 FROM apache/airflow:3.2.2-python3.13@sha256:bef4d135ec7b64658cf64089973edd62cab8fd72203f280c7e0952213c17d912
 
+# Links the image published on ghcr.io to its repository.
+LABEL org.opencontainers.image.source="https://github.com/Maeva-RODRIGUES/wattlake"
+
 # Constraints of the base image's Airflow version: every package they list
 # (pyarrow, s3fs, fsspec, httpx...) gets the version Airflow was released with.
 # The ingestion package declares its own pinned dependencies (pyproject.toml),

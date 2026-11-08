@@ -14,7 +14,7 @@ import sys
 import time
 import urllib.request
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
@@ -38,7 +38,7 @@ TIMEOUT_MS = 30_000
 
 def run_smoke_test() -> str:
     """Run the smoke test and return its UTC start time (ISO 8601, seconds)."""
-    started_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    started_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
     print("==> Running make smoke-test")
     subprocess.run(["make", "smoke-test"], cwd=REPO_ROOT, check=True)
     return started_at
@@ -73,9 +73,16 @@ def port_forwards(*forwards: tuple[str, int, int]):
             print(f"==> Port-forward svc/{service} to 127.0.0.1:{local_port}")
             process = subprocess.Popen(
                 [
-                    "kubectl", "--context", KUBE_CONTEXT, "--namespace", NAMESPACE,
-                    "port-forward", "--address", "127.0.0.1",
-                    f"svc/{service}", f"{local_port}:{remote_port}",
+                    "kubectl",
+                    "--context",
+                    KUBE_CONTEXT,
+                    "--namespace",
+                    NAMESPACE,
+                    "port-forward",
+                    "--address",
+                    "127.0.0.1",
+                    f"svc/{service}",
+                    f"{local_port}:{remote_port}",
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
@@ -97,10 +104,7 @@ def port_forwards(*forwards: tuple[str, int, int]):
 def latest_smoke_query_id() -> str:
     """Id of the latest finished smoke test assertion query, from the Trino REST API."""
     queries = get_json(f"{TRINO_URL}/v1/query", headers={"X-Trino-User": TRINO_USER})
-    matches = [
-        q for q in queries
-        if q["state"] == "FINISHED" and "data_check" in q["query"]
-    ]
+    matches = [q for q in queries if q["state"] == "FINISHED" and "data_check" in q["query"]]
     if not matches:
         raise RuntimeError("no finished smoke test query found in Trino")
     return max(matches, key=lambda q: q["queryStats"]["createTime"])["queryId"]
@@ -118,10 +122,7 @@ def page_box(page: Page, selector_or_locator) -> dict:
 def capture_nessie(page: Page, started_at: str) -> Path:
     """Commit log of branch main, cropped to the commits made by this smoke test run."""
     history = get_json(f"{NESSIE_URL}/api/v2/trees/main/history")["logEntries"]
-    messages = [
-        e["commitMeta"]["message"] for e in history
-        if e["commitMeta"]["commitTime"][:19] >= started_at
-    ]
+    messages = [e["commitMeta"]["message"] for e in history if e["commitMeta"]["commitTime"][:19] >= started_at]
     if not messages:
         raise RuntimeError(f"no Nessie commit on main since {started_at}Z")
 
@@ -180,15 +181,17 @@ def capture_trino(page: Page) -> Path:
 def main() -> int:
     started_at = run_smoke_test()
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    with port_forwards(("nessie", NESSIE_PORT, 19120), ("trino", TRINO_PORT, 8080)):
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            try:
-                page = browser.new_page(viewport=VIEWPORT)
-                print(f"==> Saved {capture_nessie(page, started_at).relative_to(REPO_ROOT)}")
-                print(f"==> Saved {capture_trino(page).relative_to(REPO_ROOT)}")
-            finally:
-                browser.close()
+    with (
+        port_forwards(("nessie", NESSIE_PORT, 19120), ("trino", TRINO_PORT, 8080)),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(viewport=VIEWPORT)
+            print(f"==> Saved {capture_nessie(page, started_at).relative_to(REPO_ROOT)}")
+            print(f"==> Saved {capture_trino(page).relative_to(REPO_ROOT)}")
+        finally:
+            browser.close()
     return 0
 
 

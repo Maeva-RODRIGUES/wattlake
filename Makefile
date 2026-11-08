@@ -28,8 +28,9 @@ AIRFLOW_VERSION     := 1.22.0
 AIRFLOW_VALUES      := infra/airflow/values.yaml
 # Custom Airflow image (ingestion/Dockerfile). Bump the tag whenever the image
 # changes: with the same tag, Helm sees no change and keeps the running pods.
-AIRFLOW_IMAGE_REPO  := wattlake-airflow
-AIRFLOW_IMAGE_TAG   := 0.3.0
+# Overridable (?=): the CI builds ghcr.io/<owner>/wattlake-airflow with the commit SHA as tag.
+AIRFLOW_IMAGE_REPO  ?= wattlake-airflow
+AIRFLOW_IMAGE_TAG   ?= 0.3.1
 AIRFLOW_IMAGE       := $(AIRFLOW_IMAGE_REPO):$(AIRFLOW_IMAGE_TAG)
 
 INGESTION_DIR       := ingestion
@@ -44,10 +45,15 @@ TRANSFORM_VENV      := $(TRANSFORM_DIR)/.venv
 # Same Python as the Airflow image, which will run dbt at step 3.5.
 TRANSFORM_PYTHON    := 3.13.13
 
+# Linter and formatter of every Python file (configuration: ruff.toml).
+# 0.17.2 (2026-10-22): latest release published at least two weeks before pinning.
+RUFF_VERSION        := 0.17.2
+PYTHON_SOURCES      := ingestion tests/catalog tools
+
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	helm-repos seaweedfs-up seaweedfs-down postgres-up postgres-down nessie-up nessie-down \
 	trino-up trino-down airflow-image airflow-image-import airflow-up airflow-down smoke-test \
-	rest-catalog-test screenshots ingestion-test transform-lock dbt
+	rest-catalog-test screenshots ingestion-test transform-lock dbt lint dbt-parse
 
 VENV                := .venv
 # Browsers downloaded by Playwright stay inside the project virtual environment.
@@ -243,5 +249,19 @@ $(TRANSFORM_VENV)/bin/dbt: $(TRANSFORM_DIR)/requirements.txt
 	touch $@
 
 ## Run a dbt command against the cluster's Trino, e.g. make dbt ARGS="debug".
+## Check the style of every Python file, without changing anything (run in CI).
+## To fix: uvx ruff@$(RUFF_VERSION) check --fix ... then uvx ruff@$(RUFF_VERSION) format ...
+lint:
+	uvx ruff@$(RUFF_VERSION) check $(PYTHON_SOURCES)
+	uvx ruff@$(RUFF_VERSION) format --check $(PYTHON_SOURCES)
+
+## Validate the dbt project without any database (run in CI): YAML, Jinja, refs
+## and test definitions. dbt build and the dbt unit tests need Trino: they run
+## in the cluster (make dbt ARGS="build", or the dbt_transformations DAG).
+dbt-parse: $(TRANSFORM_VENV)/bin/dbt
+	cd $(TRANSFORM_DIR) && .venv/bin/dbt deps --profiles-dir . --log-path /tmp/dbt-parse/logs
+	cd $(TRANSFORM_DIR) && .venv/bin/dbt parse --profiles-dir . \
+		--target-path /tmp/dbt-parse/target --log-path /tmp/dbt-parse/logs
+
 dbt: check-kubeconfig $(TRANSFORM_VENV)/bin/dbt
 	bash $(TRANSFORM_DIR)/run.sh $(ARGS)

@@ -1,0 +1,14 @@
+# Lint and format configuration for every Python file of the repository.
+# Run with "make lint" (ruff version pinned in the Makefile), locally and in CI.
+line-length = 120
+# tools/screenshots runs on the system Python 3.12; the rest on 3.13.
+target-version = "py312"
+
+[lint]
+# Explicit rule list, so that a ruff upgrade does not change what is checked:
+# pycodestyle errors (E), Pyflakes (F), import order (I), pyupgrade (UP),
+# simplifications (SIM), logging practices (LOG).
+select = ["E", "F", "I", "UP", "SIM", "LOG"]
+
+[lint.isort]
+known-first-party = ["wattlake_ingestion"]

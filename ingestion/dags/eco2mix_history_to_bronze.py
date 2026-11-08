@@ -26,6 +26,7 @@ import pendulum
 from airflow.exceptions import AirflowSkipException
 from airflow.sdk import Asset, dag, get_current_context, task
 from airflow.timetables.interval import CronDataIntervalTimetable
+
 from wattlake_ingestion.lakehouse import BRONZE_TABLE, BRONZE_TABLE_URI
 
 PARIS = pendulum.timezone("Europe/Paris")
@@ -55,6 +56,7 @@ def eco2mix_history_to_bronze() -> None:
         from pathlib import Path
 
         from pyiceberg.catalog import load_catalog
+
         from wattlake_ingestion.bronze import load_export_file
         from wattlake_ingestion.odre import HISTORY_DATASET, OdreClient
 
@@ -65,14 +67,12 @@ def eco2mix_history_to_bronze() -> None:
             export = Path(tmp) / "export.parquet"
             with OdreClient() as client:
                 client.export_to_file(HISTORY_DATASET, start, end, export)
-            written = load_export_file(
-                load_catalog("wattlake"), export, HISTORY_DATASET, start, end, datetime.now(UTC)
-            )
+            written = load_export_file(load_catalog("wattlake"), export, HISTORY_DATASET, start, end, datetime.now(UTC))
 
         if not written:
             # Skipped rather than successful: no Asset event, so dbt is not triggered.
             raise AirflowSkipException(f"{BRONZE_TABLE}: nothing to load for [{start}, {end}), table left unchanged")
-        logging.info("%s: %d rows written for [%s, %s)", BRONZE_TABLE, written, start, end)
+        logging.getLogger(__name__).info("%s: %d rows written for [%s, %s)", BRONZE_TABLE, written, start, end)
         return written
 
     load_month()
