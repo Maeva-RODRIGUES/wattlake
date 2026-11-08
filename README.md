@@ -182,10 +182,11 @@ Sur `main`, l'image est publiée sur `ghcr.io/maeva-rodrigues/wattlake-airflow`,
 
 ### Mettre à jour les versions
 
-Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) propose chaque semaine les mises à jour des actions, de l'image de base et des dépendances de l'ingestion, avec un délai de 14 jours après publication (règle des deux semaines). Les mises à jour de sécurité ne sont pas retardées.
+Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) propose chaque semaine les mises à jour des actions et des dépendances propres à l'ingestion (PyIceberg, pytest, respx), avec un délai de 14 jours après publication (règle des deux semaines). Les mises à jour de sécurité ne sont pas retardées.
 
-Dependabot ne voit pas le reste, qui se met à jour à la main, en vérifiant que chaque version a au moins deux semaines :
+Le reste se met à jour à la main, en vérifiant que chaque version a au moins deux semaines :
 
+- **Airflow et les paquets épinglés sur ses contraintes** (`httpx`, `pyarrow`, `s3fs`, `sqlalchemy`), que Dependabot ignore : une autre version de ces paquets est impossible à installer avec les contraintes d'Airflow 3.2.2, et la CI le refuse. Monter de version Airflow change ensemble l'image de base et `apache-airflow==` dans [`ingestion/Dockerfile`](ingestion/Dockerfile), l'URL des contraintes (Dockerfile, Makefile et [`tests/catalog/run.sh`](tests/catalog/run.sh)), `airflowVersion` dans [`infra/airflow/values.yaml`](infra/airflow/values.yaml), le chart, puis ces paquets ;
 - les charts Helm et la version de Python, dans le [`Makefile`](Makefile) ;
 - les tags d'images dans les fichiers de valeurs de [`infra/`](infra/) ;
 - les dépendances de dbt : modifier [`transform/requirements.in`](transform/requirements.in), puis `make transform-lock`, qui régénère `requirements.txt` en ignorant les versions de moins de 14 jours.

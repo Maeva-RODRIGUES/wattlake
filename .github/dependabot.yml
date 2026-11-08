@@ -3,7 +3,8 @@
 # at least two weeks old. It does not delay security updates.
 # Not covered here, reviewed by hand (README.md, "Mettre à jour les versions"):
 # the Helm charts and Python version in the Makefile, the image tags in the
-# Helm values, and transform/requirements.txt (compiled by uv pip compile).
+# Helm values, transform/requirements.txt (compiled by uv pip compile), and
+# Airflow itself with the packages pinned to its constraints (see below).
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -19,6 +20,15 @@ updates:
       interval: weekly
     cooldown:
       default-days: 14
+    ignore:
+      # An Airflow upgrade also changes airflowVersion (infra/airflow/values.yaml),
+      # the chart, the constraints file and "apache-airflow==" in the Dockerfile:
+      # it is a step of its own, not a one-line FROM change.
+      - dependency-name: apache/airflow
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch
 
   - package-ecosystem: pip
     directory: /ingestion
@@ -26,3 +36,10 @@ updates:
       interval: weekly
     cooldown:
       default-days: 14
+    ignore:
+      # Pinned to the Airflow 3.2.2 constraints, which the image and the tests
+      # install with: another version cannot be resolved. They move with Airflow.
+      - dependency-name: httpx
+      - dependency-name: pyarrow
+      - dependency-name: s3fs
+      - dependency-name: sqlalchemy
