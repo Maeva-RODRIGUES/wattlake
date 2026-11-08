@@ -5,7 +5,7 @@
 
 # Tag for readability, digest for reproducibility: a tag can be rebuilt upstream,
 # the digest always designates the image that was tested.
-FROM apache/airflow:3.2.2-python3.13@sha256:bef4d135ec7b64658cf64089973edd62cab8fd72203f280c7e0952213c17d912
+FROM apache/airflow:3.3.2-python3.13@sha256:e9982ad3f49a60418622e1baf80c34b0daf3fa5091a336cb5ee61f0cdd189371
 
 # Links the image published on ghcr.io to its repository.
 LABEL org.opencontainers.image.source="https://github.com/Maeva-RODRIGUES/wattlake"
