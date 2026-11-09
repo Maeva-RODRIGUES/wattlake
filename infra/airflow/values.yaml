@@ -10,7 +10,7 @@ images:
     # (.github/workflows/ci.yml), tagged with the commit SHA. To deploy a new
     # version: wait for the CI of a commit on main, then commit its SHA here.
     repository: ghcr.io/maeva-rodrigues/wattlake-airflow
-    tag: b94d1ba20245a7b0cbc0f6f5e7787e307a384367
+    tag: 39606314ad7ef42c7015c6566e9c6afda9f75bb5
     pullPolicy: IfNotPresent
 
 # Tasks run as subprocesses of the scheduler: no Celery workers, no Redis broker.
