@@ -100,8 +100,9 @@ cluster-stop: check-kubeconfig
 cluster-start: check-kubeconfig
 	k3d cluster start $(CLUSTER_NAME)
 
-## Create the stack's Secrets with random values, all at once and only if none
-## exists: existing values are never replaced.
+## Create the stack's Secrets with random values, by groups of Secrets that
+## share values: a group is created only if none of its Secrets exists, so
+## existing values are never replaced.
 secrets: check-kubeconfig
 	bash $(SECRETS_SCRIPT)
 

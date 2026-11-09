@@ -59,7 +59,7 @@ Le catalogue `wattlake` est configuré par les variables d'environnement `PYICEB
 
 ### Recharger tout l'historique
 
-Après une perte du catalogue Nessie (son historique est en mémoire jusqu'à l'étape 4.5), les fichiers restent dans SeaweedFS mais les tables ne sont plus connues. Le chargement étant idempotent, il suffit de relancer toutes les exécutions du DAG bronze :
+Après une perte du catalogue Nessie (base `nessie` de PostgreSQL perdue, par exemple), les fichiers restent dans SeaweedFS mais les tables ne sont plus connues. Un simple redémarrage de Nessie ne perd rien : son catalogue est dans PostgreSQL (voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)). Le chargement étant idempotent, il suffit de relancer toutes les exécutions du DAG bronze :
 
 ```bash
 S="kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler --"

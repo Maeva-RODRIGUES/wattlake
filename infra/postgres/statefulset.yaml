@@ -22,7 +22,7 @@ spec:
               containerPort: 5432
           env:
             # Passwords from a Secret created by "make secrets", outside Git
-            # (see docs/adr/006-gestion-des-secrets.md). Both are only read by
+            # (see docs/adr/006-gestion-des-secrets.md). They are only read by
             # initdb, on an empty data directory.
             - name: POSTGRES_PASSWORD
               valueFrom:
@@ -34,6 +34,16 @@ spec:
                 secretKeyRef:
                   name: postgres-credentials
                   key: airflow-password
+            - name: NESSIE_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nessie-db-credentials
+                  key: username
+            - name: NESSIE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nessie-db-credentials
+                  key: password
             # Subdirectory of the volume, so initdb always starts from an empty directory.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata

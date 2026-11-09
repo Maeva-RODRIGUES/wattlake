@@ -8,9 +8,18 @@ image:
 
 replicaCount: 1
 
-# Commits and references live in the pod's memory: they are lost on restart.
-# Acceptable for the first iterations; PostgreSQL replaces it at step 4.5.
-versionStoreType: IN_MEMORY
+# Commits and references are stored in PostgreSQL (JDBC2), in the nessie
+# database of the instance from infra/postgres: they survive pod restarts.
+# See docs/adr/007-stockage-versions-nessie.md.
+versionStoreType: JDBC2
+jdbc:
+  jdbcUrl: jdbc:postgresql://postgres.wattlake.svc.cluster.local:5432/nessie
+  # Role and password from a Secret created by "make secrets", outside Git
+  # (see docs/adr/006-gestion-des-secrets.md).
+  secret:
+    name: nessie-db-credentials
+    username: username
+    password: password
 
 # Iceberg REST catalog (/iceberg), used by PyIceberg for ingestion. Trino stays
 # on the native API (/api/v2): both see the same tables. See ADR 004.

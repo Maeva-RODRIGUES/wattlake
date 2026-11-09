@@ -17,7 +17,7 @@ Avant Argo CD, les composants étaient installés par `helm upgrade --install` d
 
 Avant la reprise, chaque chart a été rendu avec `helm template` puis comparé au cluster avec `kubectl diff`, en lecture seule. Résultat :
 
-- **Nessie, Trino, SeaweedFS et PostgreSQL** : aucun objet en fonctionnement modifié. Seuls apparaissent les pods de test Helm (`*-test-connection`) et le Job qui crée le bucket `warehouse`, qui vérifie d'abord que le bucket existe. Le Deployment de Nessie est identique : la reprise ne le redémarre pas, ce qui compte tant que son catalogue est en mémoire (étape 4.5).
+- **Nessie, Trino, SeaweedFS et PostgreSQL** : aucun objet en fonctionnement modifié. Seuls apparaissent les pods de test Helm (`*-test-connection`) et le Job qui crée le bucket `warehouse`, qui vérifie d'abord que le bucket existe. Le Deployment de Nessie est identique : la reprise ne le redémarre pas, ce qui comptait alors, son catalogue étant en mémoire jusqu'à l'étape 4.5.
 - **Airflow** : nouvelle image (ghcr.io, tag du commit) et nouveaux Jobs de migration et de création d'utilisateur. Les pods d'Airflow redémarrent, sans perte : les métadonnées sont dans PostgreSQL.
 
 La reprise s'est faite en synchronisation manuelle, composant par composant. L'écart calculé par Argo CD a confirmé la mesure faite avec `kubectl diff` : pour PostgreSQL, SeaweedFS, Trino et Nessie, la seule différence était l'annotation de suivi d'Argo CD (`argocd.argoproj.io/tracking-id`), et aucun pod n'a redémarré. Les métadonnées des anciennes releases Helm (secrets `sh.helm.release.v1.*`) ont ensuite été supprimées : un `helm uninstall` aurait sinon effacé des objets désormais gérés par Argo CD.
@@ -34,10 +34,10 @@ Le chart Airflow demande, avec Argo CD, `useHelmHooks: false` et `applyCustomEnv
 
 ## Secrets
 
-Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée cinq Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials` et `airflow-credentials`. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
+Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée six Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials`, `airflow-credentials` et `nessie-db-credentials`. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
 
 - **Une identité S3 par composant** : Nessie, Trino et Airflow ont chacun leurs clés, limitées à la lecture, l'écriture et la liste du bucket `warehouse`. L'identité `admin`, utilisée par aucun composant, sert à l'exploitation.
-- **Tout ou rien** : les Secrets partagent des valeurs (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Le script ne remplace jamais un Secret existant, et s'arrête si seuls certains existent.
+- **Par groupes, en tout ou rien** : des Secrets qui partagent des valeurs forment un groupe (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Un groupe est créé en entier ou pas du tout : le script ne remplace jamais un Secret existant, et s'arrête si seuls certains Secrets d'un groupe existent. Deux groupes : `stack` (les cinq premiers Secrets) et `nessie-db` (le rôle PostgreSQL de Nessie, voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)). Un groupe ajouté plus tard se crée sur un cluster existant sans toucher aux autres.
 - **Hors d'Argo CD** : les Secrets ne sont pas suivis par Argo CD, et portent des noms qu'aucun chart ne génère. Argo CD ne peut donc pas les supprimer.
 
 Lors du passage à ces Secrets, Argo CD a supprimé (`prune`) les Secrets que les charts ne généraient plus, sauf deux : `airflow-fernet-key` et `seaweedfs-s3-secret`. Les charts les déclarent comme hooks Helm (annotation `helm.sh/hook`), et Argo CD traite un hook à part : il ne le supprime jamais par `prune`. Ils ont été supprimés à la main. Ce piège vaut pour toute ressource déclarée en hook par un chart.
@@ -52,17 +52,29 @@ kubectl --context k3d-wattlake -n wattlake get secret airflow-credentials \
 
 ### Changer les valeurs
 
-1. Supprimer les cinq Secrets, puis relancer `make secrets`.
+1. Supprimer tous les Secrets du groupe à changer, puis relancer `make secrets`.
 2. PostgreSQL ne lit ses mots de passe qu'à l'initialisation d'un volume vide. Sur un volume existant, appliquer les nouveaux mots de passe avec `ALTER ROLE`, en psql dans le pod (connexion locale, sans mot de passe). Le SQL est envoyé sur l'entrée standard, pour que les mots de passe n'apparaissent pas dans une ligne de commande :
 
    ```bash
    S="kubectl --context k3d-wattlake -n wattlake"
    PG=$($S get secret postgres-credentials -o jsonpath='{.data.postgres-password}' | base64 --decode)
    AF=$($S get secret postgres-credentials -o jsonpath='{.data.airflow-password}' | base64 --decode)
-   printf "ALTER ROLE postgres PASSWORD '%s';\nALTER ROLE airflow PASSWORD '%s';\n" "$PG" "$AF" \
-     | $S exec -i postgres-0 -- psql --username postgres --set ON_ERROR_STOP=1
+   NE=$($S get secret nessie-db-credentials -o jsonpath='{.data.password}' | base64 --decode)
+   printf "ALTER ROLE postgres PASSWORD '%s';\nALTER ROLE airflow PASSWORD '%s';\nALTER ROLE nessie PASSWORD '%s';\n" \
+     "$PG" "$AF" "$NE" | $S exec -i postgres-0 -- psql --username postgres --set ON_ERROR_STOP=1
    ```
+
+   Ne garder que les lignes des rôles dont le mot de passe a changé.
 
 3. Redémarrer les pods qui lisent ces valeurs : `$S rollout restart` sur les Deployments et StatefulSets de SeaweedFS (filer), Nessie, Trino et Airflow. Un pod ne relit pas ses variables d'environnement quand un Secret change.
 
-Changer la clé Fernet rend illisibles les connexions et variables déjà chiffrées par Airflow. Changer les clés S3 de Nessie redémarre Nessie, ce qui efface son catalogue tant qu'il est en mémoire : voir la procédure de rechargement dans [ingestion/README.md](../ingestion/README.md).
+Changer la clé Fernet rend illisibles les connexions et variables déjà chiffrées par Airflow. Le catalogue de Nessie est dans PostgreSQL (base `nessie`) : redémarrer Nessie ne le perd pas.
+
+## PostgreSQL
+
+Une seule instance, avec une base par composant, chacune propriété de son rôle :
+
+- `airflow` : les métadonnées d'Airflow (voir l'[ADR 003](../docs/adr/003-base-metadonnees-airflow.md)) ;
+- `nessie` : le version store de Nessie, en JDBC2 (voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)). Nessie crée ses tables (`refs2`, `objs2`) au premier démarrage.
+
+Chaque base n'accepte que les connexions de son propriétaire (`REVOKE CONNECT ... FROM PUBLIC`) : le rôle `nessie` ne peut pas se connecter à la base `airflow`, ni l'inverse. Les rôles et les bases sont créés par les scripts de [postgres/initdb.yaml](postgres/initdb.yaml), qui ne s'exécutent que sur un volume vide.

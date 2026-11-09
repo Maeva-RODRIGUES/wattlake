@@ -3,47 +3,66 @@
 # generated on this machine (see docs/adr/006-gestion-des-secrets.md).
 # Git only holds the Secret names: the values never leave the cluster.
 #
-# All or nothing: the Secrets share values (each S3 key pair is both in its
-# component's Secret and in the SeaweedFS configuration; the airflow role
-# password is both in PostgreSQL's Secret and in Airflow's connection URL).
-#   - none exists: all are created;
+# Secrets that share a value form a group, created all at once or not at all:
+#   - none of the group exists: the whole group is created;
 #   - all exist: nothing changes, existing values are kept;
 #   - some exist: the script stops, as new values would not match the others.
+# Groups are independent: a group added later is created on an existing cluster
+# without touching the others.
+#   1. stack: each S3 key pair is both in its component's Secret and in the
+#      SeaweedFS configuration; the airflow role password is both in
+#      PostgreSQL's Secret and in Airflow's connection URL.
+#   2. nessie-db: the nessie role, read by PostgreSQL and by Nessie.
 #
 # Usage: make secrets
 set -euo pipefail
 
 CONTEXT="k3d-wattlake"
 NAMESPACE="wattlake"
-SECRETS=(seaweedfs-s3-config nessie-credentials trino-credentials postgres-credentials airflow-credentials)
+STACK_SECRETS=(seaweedfs-s3-config nessie-credentials trino-credentials postgres-credentials airflow-credentials)
+NESSIE_DB_SECRETS=(nessie-db-credentials)
 LABEL="app.kubernetes.io/part-of=wattlake"
 
 kubectl_ns() {
     kubectl --context "$CONTEXT" --namespace "$NAMESPACE" "$@"
 }
 
-existing=()
-for name in "${SECRETS[@]}"; do
-    # Command substitution, not a redirection: a confined kubectl (snap) prints
-    # nothing when its output is redirected to a file.
-    if [ -n "$(kubectl_ns get secret "$name" --ignore-not-found --output name)" ]; then
-        existing+=("$name")
+# Prints "create" when no Secret of the group exists, "skip" when all exist,
+# and fails when only some exist.
+group_action() {
+    local group="$1"; shift
+    local existing=()
+    for name in "$@"; do
+        # Command substitution, not a redirection: a confined kubectl (snap)
+        # prints nothing when its output is redirected to a file.
+        if [ -n "$(kubectl_ns get secret "$name" --ignore-not-found --output name)" ]; then
+            existing+=("$name")
+        fi
+    done
+    if [ "${#existing[@]}" -eq "$#" ]; then
+        echo "skip"
+    elif [ "${#existing[@]}" -eq 0 ]; then
+        echo "create"
+    else
+        echo "Group ${group}: only some Secrets exist (${existing[*]}), new values would not match them." >&2
+        echo "Delete the whole group to generate it again (see infra/README.md)." >&2
+        return 1
     fi
-done
+}
 
-if [ "${#existing[@]}" -eq "${#SECRETS[@]}" ]; then
-    echo "All ${#SECRETS[@]} Secrets already exist in namespace ${NAMESPACE}: nothing to do."
-    exit 0
-fi
-if [ "${#existing[@]}" -gt 0 ]; then
-    echo "Only some Secrets exist (${existing[*]}): new values would not match them." >&2
-    echo "Delete them all to generate a new set (see infra/README.md)." >&2
-    exit 1
+# Both checks run before anything is created.
+stack_action=$(group_action stack "${STACK_SECRETS[@]}")
+nessie_db_action=$(group_action nessie-db "${NESSIE_DB_SECRETS[@]}")
+
+if [ -z "$(kubectl --context "$CONTEXT" get namespace "$NAMESPACE" --ignore-not-found --output name)" ]; then
+    kubectl --context "$CONTEXT" create namespace "$NAMESPACE"
 fi
 
 # Hexadecimal values: no character needs escaping in a URL, SQL or JSON.
 hex() { openssl rand -hex "$1"; }
 
+# Function bodies are not indented: their heredocs must start at column 0.
+create_stack() {
 # One S3 identity per component (20-character access key, 40-character secret key).
 admin_access=$(hex 10) admin_secret=$(hex 20)
 nessie_access=$(hex 10) nessie_secret=$(hex 20)
@@ -68,10 +87,6 @@ s3_config=$(cat <<EOF
 ]}
 EOF
 )
-
-if [ -z "$(kubectl --context "$CONTEXT" get namespace "$NAMESPACE" --ignore-not-found --output name)" ]; then
-    kubectl --context "$CONTEXT" create namespace "$NAMESPACE"
-fi
 
 # Manifests sent on stdin: the values never appear on a command line.
 cat <<EOF | kubectl_ns create --filename -
@@ -132,5 +147,30 @@ stringData:
   s3-access-key-id: ${airflow_access}
   s3-secret-access-key: ${airflow_secret}
 EOF
+}
+
+create_nessie_db() {
+cat <<EOF | kubectl_ns create --filename -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nessie-db-credentials
+  labels: {app.kubernetes.io/part-of: wattlake}
+type: Opaque
+stringData:
+  # Key names read by the Nessie chart (jdbc.secret) and by PostgreSQL's initdb.
+  username: nessie
+  password: $(hex 24)
+EOF
+}
+
+for group in stack nessie_db; do
+    action_var="${group}_action"
+    if [ "${!action_var}" = "create" ]; then
+        "create_${group}"
+    else
+        echo "Group ${group//_/-}: all Secrets already exist, values kept."
+    fi
+done
 
 kubectl_ns get secrets --selector "$LABEL"

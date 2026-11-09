@@ -16,4 +16,18 @@ data:
     CREATE ROLE airflow WITH LOGIN PASSWORD :'airflow_password';
     -- The owner gets full rights on the database and its public schema, and nothing else.
     CREATE DATABASE airflow OWNER airflow;
+    -- Every role may connect to a new database by default: keep it to its owner.
+    REVOKE CONNECT ON DATABASE airflow FROM PUBLIC;
+    SQL
+  02-nessie.sh: |
+    #!/usr/bin/env bash
+    # Nessie's version store (JDBC2, see docs/adr/007-stockage-versions-nessie.md).
+    # Role and password from the nessie-db-credentials Secret. Nessie creates its
+    # own tables at startup, in the public schema of its database.
+    set -euo pipefail
+    psql --username "$POSTGRES_USER" --set ON_ERROR_STOP=1 \
+        --set nessie_user="$NESSIE_DB_USER" --set nessie_password="$NESSIE_DB_PASSWORD" <<'SQL'
+    CREATE ROLE :"nessie_user" WITH LOGIN PASSWORD :'nessie_password';
+    CREATE DATABASE nessie OWNER :"nessie_user";
+    REVOKE CONNECT ON DATABASE nessie FROM PUBLIC;
     SQL

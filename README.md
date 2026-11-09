@@ -71,6 +71,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 - [x] Intégration continue avec GitHub Actions (ADR 005) : lint, tests Python, validation dbt, construction et publication de l'image Airflow
 - [x] Déploiement GitOps avec Argo CD
 - [x] Identifiants déplacés dans des Secrets Kubernetes, générés hors du dépôt, avec une identité S3 par composant (ADR 006)
+- [x] Catalogue Nessie persistant, stocké dans PostgreSQL (ADR 007)
 - [ ] Write-Audit-Publish : écriture sur une branche Nessie, contrôles qualité, puis fusion dans `main`
 
 **Étape 4 : temps réel et observabilité**
@@ -217,7 +218,7 @@ make cluster-start   # redémarre le cluster
 make down            # supprime le cluster et toutes ses données (alias de cluster-down)
 ```
 
-Nessie conserve pour l'instant son historique en mémoire : tout redémarrage de son pod efface les commits, alors que les fichiers restent dans SeaweedFS. Un stockage persistant est prévu dans la feuille de route.
+Le catalogue de Nessie (branches, commits, emplacement des tables) est stocké dans PostgreSQL : il survit au redémarrage de Nessie et à `make cluster-stop`, mais pas à `make down`, qui supprime aussi les volumes.
 
 ## Choix techniques
 
@@ -229,12 +230,13 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 004 : catalogue REST Iceberg pour l'ingestion](docs/adr/004-catalogue-rest-ingestion.md), qui remplace l'ADR 002 : pourquoi PyIceberg écrit par le catalogue REST de Nessie avec ses propres clés S3, pendant que Trino reste sur l'API native.
 - [ADR 005 : plateforme d'intégration continue](docs/adr/005-integration-continue.md), ou pourquoi GitHub Actions plutôt que GitLab CI, dont la CI pour un dépôt GitHub est réservée aux offres payantes.
 - [ADR 006 : gestion des secrets](docs/adr/006-gestion-des-secrets.md), ou pourquoi des Secrets générés hors du dépôt plutôt que Sealed Secrets, SOPS ou External Secrets, sur un cluster local recréé à volonté.
+- [ADR 007 : stockage des versions de Nessie](docs/adr/007-stockage-versions-nessie.md), ou pourquoi JDBC2 sur l'instance PostgreSQL existante plutôt que RocksDB ou une instance dédiée.
 
 ## Ce que je ferais en production
 
 Ce projet tourne en local, avec des choix simplifiés. Sur une plateforme en production, je prévoirais en plus :
 
-- un stockage persistant pour Nessie (PostgreSQL), au lieu du stockage en mémoire utilisé pour démarrer ;
+- une base PostgreSQL gérée, avec haute disponibilité et sauvegardes, pour Airflow et Nessie, voire une instance par composant (voir l'ADR 007) ;
 - une gestion des secrets centralisée : External Secrets et le gestionnaire de secrets du cloud, à la place de `make secrets` (voir l'ADR 006) ;
 - de la haute disponibilité sur le stockage objet et sur le coordinateur Trino ;
 - de la supervision et des alertes sur la fraîcheur et la qualité des données.
