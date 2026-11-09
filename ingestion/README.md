@@ -67,9 +67,12 @@ $S airflow dags pause dbt_transformations
 $S airflow tasks clear eco2mix_history_to_bronze --yes
 # attendre la fin des 178 exécutions, puis :
 $S airflow dags unpause dbt_transformations
+$S airflow dags trigger dbt_transformations
 ```
 
-Mettre `dbt_transformations` en pause pendant le rechargement évite des dizaines de reconstructions de silver et gold : chaque mois chargé émet un événement d'Asset, et sans pause dbt se relance dès qu'il est libre (63 exécutions constatées lors d'un rechargement, en ralentissant le chargement). Réactivé à la fin, le DAG consomme tous les événements accumulés en une seule exécution.
+Mettre `dbt_transformations` en pause pendant le rechargement évite des dizaines de reconstructions de silver et gold : chaque mois chargé émet un événement d'Asset, et sans pause dbt se relance dès qu'il est libre (63 exécutions constatées lors d'un rechargement, en ralentissant le chargement).
+
+Le déclenchement manuel à la fin est indispensable. Airflow ne met en file les événements d'Asset que pour les DAG actifs : ceux émis pendant la pause sont perdus pour `dbt_transformations`, et le réactiver ne lance rien. Constaté lors d'un rechargement : 176 événements émis, aucune exécution de dbt après la réactivation. Une seule exécution manuelle reconstruit ensuite silver et gold depuis tout bronze.
 
 ### Tester un mois sans le scheduler
 
