@@ -40,6 +40,8 @@ Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-g
 - **Tout ou rien** : les Secrets partagent des valeurs (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Le script ne remplace jamais un Secret existant, et s'arrête si seuls certains existent.
 - **Hors d'Argo CD** : les Secrets ne sont pas suivis par Argo CD, et portent des noms qu'aucun chart ne génère. Argo CD ne peut donc pas les supprimer.
 
+Lors du passage à ces Secrets, Argo CD a supprimé (`prune`) les Secrets que les charts ne généraient plus, sauf deux : `airflow-fernet-key` et `seaweedfs-s3-secret`. Les charts les déclarent comme hooks Helm (annotation `helm.sh/hook`), et Argo CD traite un hook à part : il ne le supprime jamais par `prune`. Ils ont été supprimés à la main. Ce piège vaut pour toute ressource déclarée en hook par un chart.
+
 Lister les Secrets, ou lire une valeur :
 
 ```bash
