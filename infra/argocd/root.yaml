@@ -15,6 +15,9 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
-  # Manual sync for now: each component is taken over from Helm one at a time,
-  # after reading its diff (see infra/README.md).
-  syncPolicy: {}
+  # Automated sync: the cluster follows the main branch. prune deletes what is
+  # removed from Git, selfHeal reverts changes made by hand in the cluster.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

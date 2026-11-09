@@ -52,7 +52,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | Orchestration | Airflow | Planifie l'ingestion batch et lance dbt chaque fois que bronze change |
 | Streaming | Kafka (à venir) | Transportera les mises à jour en temps réel |
 | Intégration continue | GitHub Actions, Dependabot (ADR 005) | Vérifie le code à chaque modification et publie l'image Airflow |
-| Déploiement | Kubernetes, Helm, puis Argo CD (à venir) | Rend la stack reproductible, puis déployée en GitOps |
+| Déploiement | Kubernetes, Helm, Argo CD | Déploie la stack en GitOps : le cluster suit la branche `main` |
 
 ## Feuille de route
 
@@ -69,7 +69,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 
 **Étape 3 : DataOps**
 - [x] Intégration continue avec GitHub Actions (ADR 005) : lint, tests Python, validation dbt, construction et publication de l'image Airflow
-- [ ] Déploiement GitOps avec Argo CD
+- [x] Déploiement GitOps avec Argo CD
 - [ ] Write-Audit-Publish : écriture sur une branche Nessie, contrôles qualité, puis fusion dans `main`
 - [ ] Identifiants déplacés dans des Secrets Kubernetes
 
@@ -113,7 +113,7 @@ make rest-catalog-test  # écriture PyIceberg par le catalogue REST, lue depuis 
 make dbt ARGS="debug"   # projet dbt : configuration et connexion à Trino (voir transform/README.md)
 ```
 
-`make up` crée le cluster, installe Argo CD, puis lui confie l'Application racine. Argo CD déploie ensuite SeaweedFS, PostgreSQL, Nessie, Trino et Airflow depuis la branche `main` du dépôt (voir [infra/README.md](infra/README.md)). Les Applications sont pour l'instant en synchronisation manuelle, le temps de la reprise des composants installés auparavant par Helm. `make up` peut être relancé : il ne recrée pas le cluster existant.
+`make up` crée le cluster, installe Argo CD, puis lui confie l'Application racine. Argo CD déploie ensuite SeaweedFS, PostgreSQL, Nessie, Trino et Airflow depuis la branche `main` du dépôt, et les maintient synchronisés : un changement fait à la main dans le cluster est annulé (voir [infra/README.md](infra/README.md)). `make up` peut être relancé : il ne recrée pas le cluster existant.
 
 ### Déployer une modification
 

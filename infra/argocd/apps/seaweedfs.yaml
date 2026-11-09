@@ -1,4 +1,4 @@
-# Argo CD Application for SeaweedFS (S3 object storage). Synced manually for now (see infra/README.md).
+# Argo CD Application for SeaweedFS (S3 object storage). Synced automatically from the main branch.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -23,6 +23,11 @@ spec:
     - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
       targetRevision: main
       ref: values
+  # Automated sync: the cluster follows the main branch. prune deletes what is
+  # removed from Git, selfHeal reverts changes made by hand in the cluster.
   syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true

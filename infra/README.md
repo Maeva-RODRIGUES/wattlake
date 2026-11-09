@@ -20,7 +20,13 @@ Avant la reprise, chaque chart a été rendu avec `helm template` puis comparé 
 - **Nessie, Trino, SeaweedFS et PostgreSQL** : aucun objet en fonctionnement modifié. Seuls apparaissent les pods de test Helm (`*-test-connection`) et le Job qui crée le bucket `warehouse`, qui vérifie d'abord que le bucket existe. Le Deployment de Nessie est identique : la reprise ne le redémarre pas, ce qui compte tant que son catalogue est en mémoire (étape 4.5).
 - **Airflow** : nouvelle image (ghcr.io, tag du commit) et nouveaux Jobs de migration et de création d'utilisateur. Les pods d'Airflow redémarrent, sans perte : les métadonnées sont dans PostgreSQL.
 
-Les Applications sont d'abord en synchronisation manuelle, pour reprendre les composants un par un. Après la reprise, les métadonnées des anciennes releases Helm (secrets `sh.helm.release.v1.*`) sont supprimées : un `helm uninstall` effacerait sinon des objets désormais gérés par Argo CD.
+La reprise s'est faite en synchronisation manuelle, composant par composant. L'écart calculé par Argo CD a confirmé la mesure faite avec `kubectl diff` : pour PostgreSQL, SeaweedFS, Trino et Nessie, la seule différence était l'annotation de suivi d'Argo CD (`argocd.argoproj.io/tracking-id`), et aucun pod n'a redémarré. Les métadonnées des anciennes releases Helm (secrets `sh.helm.release.v1.*`) ont ensuite été supprimées : un `helm uninstall` aurait sinon effacé des objets désormais gérés par Argo CD.
+
+## Synchronisation automatique
+
+Toutes les Applications sont en synchronisation automatique, avec `prune` (ce qui disparaît de Git est supprimé du cluster) et `selfHeal` (un changement fait à la main dans le cluster est annulé). Argo CD vérifie le dépôt toutes les trois minutes environ.
+
+L'Application racine elle-même n'est pas lue depuis Git : elle est appliquée par `make argocd-apps`. Une modification de [argocd/root.yaml](argocd/root.yaml) se déploie en relançant cette cible ; une modification des Applications de [argocd/apps/](argocd/apps/) se déploie toute seule.
 
 ## Airflow et Argo CD
 

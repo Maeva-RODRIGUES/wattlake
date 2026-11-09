@@ -57,6 +57,20 @@ Le DAG ([dags/dbt_transformations.py](dags/dbt_transformations.py)) construit le
 
 Le catalogue `wattlake` est configuré par les variables d'environnement `PYICEBERG_CATALOG__WATTLAKE__*`, définies dans `infra/airflow/values.yaml`.
 
+### Recharger tout l'historique
+
+Après une perte du catalogue Nessie (son historique est en mémoire jusqu'à l'étape 4.5), les fichiers restent dans SeaweedFS mais les tables ne sont plus connues. Le chargement étant idempotent, il suffit de relancer toutes les exécutions du DAG bronze :
+
+```bash
+S="kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler --"
+$S airflow dags pause dbt_transformations
+$S airflow tasks clear eco2mix_history_to_bronze --yes
+# attendre la fin des 178 exécutions, puis :
+$S airflow dags unpause dbt_transformations
+```
+
+Mettre `dbt_transformations` en pause pendant le rechargement évite des dizaines de reconstructions de silver et gold : chaque mois chargé émet un événement d'Asset, et sans pause dbt se relance dès qu'il est libre (63 exécutions constatées lors d'un rechargement, en ralentissant le chargement). Réactivé à la fin, le DAG consomme tous les événements accumulés en une seule exécution.
+
 ### Tester un mois sans le scheduler
 
 `airflow dags test` exécute le DAG dans le pod, pour la période qui se termine à la date passée en argument. Pour charger août 2026 :

@@ -1,4 +1,4 @@
-# Argo CD Application for Nessie (Iceberg catalog) and its S3 credentials Secret. Synced manually for now (see infra/README.md).
+# Argo CD Application for Nessie (Iceberg catalog) and its S3 credentials Secret. Synced automatically from the main branch.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -29,6 +29,11 @@ spec:
       path: infra/nessie
       directory:
         include: s3-credentials.yaml
+  # Automated sync: the cluster follows the main branch. prune deletes what is
+  # removed from Git, selfHeal reverts changes made by hand in the cluster.
   syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
