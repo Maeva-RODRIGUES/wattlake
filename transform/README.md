@@ -23,7 +23,7 @@ Dans le cluster, le DAG `dbt_transformations` lance `dbt build` chaque fois que 
 - un environnement virtuel dbt dédié, `/opt/dbt/venv`, installé depuis [requirements.txt](requirements.txt), séparé de celui d'Airflow dont les contraintes diffèrent pour 26 paquets communs ;
 - ce projet, dans `/opt/wattlake/transform`, avec `dbt_utils` déjà installé par `dbt deps` à la construction de l'image.
 
-Une modification du projet dbt n'arrive dans Airflow qu'après reconstruction de l'image : incrémenter `AIRFLOW_IMAGE_TAG` dans le `Makefile`, puis `make airflow-up`.
+Une modification du projet dbt n'arrive dans Airflow qu'avec une nouvelle image : la CI la publie pour chaque commit sur `main`, puis son SHA est reporté dans `images.airflow.tag` de `infra/airflow/values.yaml`, qu'Argo CD déploie (voir « Déployer une modification » dans le [README](../README.md)).
 
 ## Intégration continue
 

@@ -1,14 +1,16 @@
 # Values for the apache-airflow/airflow chart 1.22.0 (Airflow 3.2.2).
-# Usage: make airflow-up / make airflow-down
+# Deployed by Argo CD (infra/argocd/apps/airflow.yaml), from the main branch.
 
 # airflowVersion drives the chart's version-specific templates: it must match
 # the Airflow version of the image (apache/airflow:3.2.2 in ingestion/Dockerfile).
 airflowVersion: "3.2.2"
 images:
   airflow:
-    # Custom image built from ingestion/Dockerfile. Repository and tag are set by
-    # "make airflow-up" from AIRFLOW_IMAGE_REPO and AIRFLOW_IMAGE_TAG in the Makefile.
-    # The image is loaded into the k3d nodes, not pulled from a registry.
+    # Custom image built from ingestion/Dockerfile and published by the CI
+    # (.github/workflows/ci.yml), tagged with the commit SHA. To deploy a new
+    # version: wait for the CI of a commit on main, then commit its SHA here.
+    repository: ghcr.io/maeva-rodrigues/wattlake-airflow
+    tag: b94d1ba20245a7b0cbc0f6f5e7787e307a384367
     pullPolicy: IfNotPresent
 
 # Tasks run as subprocesses of the scheduler: no Celery workers, no Redis broker.
@@ -121,8 +123,17 @@ jwtSecret: wattlake-dev-jwt-secret
 # hooks: with "helm --wait", pods wait for the migration while the hooks only
 # start once the wait is over, so the release would never become ready.
 # One-off Jobs running the Airflow CLI: they only run at install and upgrade time.
+# With Argo CD, the chart documentation requires useHelmHooks and applyCustomEnv
+# set to false on both Jobs ("Installing the Helm Chart with Argo CD").
+# A Job cannot be modified once created, and its spec changes with every image
+# tag: the Sync hook annotation makes Argo CD delete and recreate the Job on
+# each sync instead of patching it. The documentation recommends it for the
+# migrations; it is applied to the user creation too, for the same reason.
 migrateDatabaseJob:
   useHelmHooks: false
+  applyCustomEnv: false
+  jobAnnotations:
+    argocd.argoproj.io/hook: Sync
   resources: &jobResources
     requests:
       cpu: 100m
@@ -132,6 +143,9 @@ migrateDatabaseJob:
       memory: 1Gi
 createUserJob:
   useHelmHooks: false
+  applyCustomEnv: false
+  jobAnnotations:
+    argocd.argoproj.io/hook: Sync
   resources: *jobResources
   defaultUser:
     # DEVELOPMENT ONLY: fake placeholder password for the local web interface.

@@ -107,13 +107,27 @@ Sans direnv, exporter à la main les quatre variables de [`.envrc.example`](.env
 ### Lancer la stack
 
 ```bash
-make up                 # cluster k3d, puis SeaweedFS, PostgreSQL, Nessie, Trino et Airflow (image construite et importée dans k3d)
+make up                 # cluster k3d, Argo CD, puis les Applications de la stack
 make smoke-test         # test de bout en bout
 make rest-catalog-test  # écriture PyIceberg par le catalogue REST, lue depuis Trino
 make dbt ARGS="debug"   # projet dbt : configuration et connexion à Trino (voir transform/README.md)
 ```
 
-`make up` peut être relancé : il ne recrée pas le cluster existant et met à jour les composants. Pour un seul composant, utiliser sa cible : `make cluster-up`, `make seaweedfs-up`, `make postgres-up`, `make nessie-up`, `make trino-up` ou `make airflow-up`.
+`make up` crée le cluster, installe Argo CD, puis lui confie l'Application racine. Argo CD déploie ensuite SeaweedFS, PostgreSQL, Nessie, Trino et Airflow depuis la branche `main` du dépôt (voir [infra/README.md](infra/README.md)). Les Applications sont pour l'instant en synchronisation manuelle, le temps de la reprise des composants installés auparavant par Helm. `make up` peut être relancé : il ne recrée pas le cluster existant.
+
+### Déployer une modification
+
+Le cluster suit la branche `main` : modifier un fichier de valeurs dans `infra/`, puis le pousser sur `main`, suffit à le déployer. Pour une nouvelle version de l'image Airflow (code d'ingestion, DAG ou projet dbt), attendre que la CI du commit sur `main` ait publié l'image, puis reporter son SHA dans `images.airflow.tag` de [infra/airflow/values.yaml](infra/airflow/values.yaml) et pousser ce changement.
+
+### Interface d'Argo CD
+
+```bash
+kubectl --context k3d-wattlake -n argocd port-forward svc/argocd-server 8082:80   # http://127.0.0.1:8082
+kubectl --context k3d-wattlake -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 --decode                                 # mot de passe de « admin »
+```
+
+Le mot de passe initial est généré par Argo CD à l'installation : il n'est pas dans le dépôt.
 
 `make rest-catalog-test` vérifie le chemin d'écriture de l'ingestion (voir l'[ADR 004](docs/adr/004-catalogue-rest-ingestion.md)) : depuis un pod éphémère, PyIceberg crée une table par le catalogue REST de Nessie, y ajoute des lignes puis en remplace une partie. Trino relit ensuite la table par l'API native, et Nessie doit montrer un commit par écriture.
 

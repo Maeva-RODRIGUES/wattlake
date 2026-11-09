@@ -1,0 +1,57 @@
+# Values for the argo/argo-cd chart 10.11.1 (Argo CD v3.5.6).
+# Argo CD is the only component installed by hand ("make argocd-up"): it then
+# deploys every other component from this repository (infra/argocd/apps/).
+
+global:
+  image:
+    # Pinned explicitly instead of relying on the chart-version default.
+    tag: v3.5.6
+
+configs:
+  params:
+    # The web interface is only reached through a local port-forward, without
+    # TLS: no certificate to manage on a local cluster.
+    server.insecure: true
+
+# Not needed here: external login (Dex), notifications, ApplicationSet (one
+# Application per component is written by hand in infra/argocd/apps/).
+dex:
+  enabled: false
+notifications:
+  enabled: false
+applicationSet:
+  replicas: 0
+
+# Sized for a single developer workload.
+controller:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 768Mi
+server:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+repoServer:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+redis:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

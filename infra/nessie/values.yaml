@@ -1,6 +1,6 @@
 # Nessie catalog for the local WattLake cluster.
-# Chart: nessie/nessie 0.109.0 (version pinned in the Makefile).
-# Usage: make nessie-up / make nessie-down
+# Chart: nessie/nessie 0.109.0 (version pinned in infra/argocd/apps/nessie.yaml).
+# Deployed by Argo CD (infra/argocd/apps/nessie.yaml), from the main branch.
 
 image:
   # Pinned explicitly instead of relying on the chart-version default.

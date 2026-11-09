@@ -1,0 +1,34 @@
+# Argo CD Application for Nessie (Iceberg catalog) and its S3 credentials Secret. Synced manually for now (see infra/README.md).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nessie
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wattlake
+  sources:
+    # The chart, at its pinned version. releaseName keeps the resource names of
+    # the former Helm release, so that Argo CD takes over the existing objects.
+    - repoURL: https://charts.projectnessie.org
+      chart: nessie
+      targetRevision: 0.109.0
+      helm:
+        releaseName: nessie
+        valueFiles:
+          - $values/infra/nessie/values.yaml
+    # This repository, referenced as $values for the values file above.
+    - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+      targetRevision: main
+      ref: values
+    # Plain manifests next to the values file.
+    - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+      targetRevision: main
+      path: infra/nessie
+      directory:
+        include: s3-credentials.yaml
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

@@ -1,5 +1,5 @@
 # PostgreSQL for the Airflow metadata database (see docs/adr/003-base-metadonnees-airflow.md).
-# Usage: make postgres-up / make postgres-down
+# Deployed by Argo CD (infra/argocd/apps/postgres.yaml), from the main branch.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: wattlake

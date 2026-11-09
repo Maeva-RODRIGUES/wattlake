@@ -1,6 +1,6 @@
 # SeaweedFS object storage for the local WattLake cluster.
-# Chart: seaweedfs/seaweedfs 4.52.0 (version pinned in the Makefile).
-# Usage: make seaweedfs-up / make seaweedfs-down
+# Chart: seaweedfs/seaweedfs 4.52.0 (version pinned in infra/argocd/apps/seaweedfs.yaml).
+# Deployed by Argo CD (infra/argocd/apps/seaweedfs.yaml), from the main branch.
 
 image:
   tag: "4.52"

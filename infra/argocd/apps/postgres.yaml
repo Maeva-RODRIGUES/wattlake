@@ -1,0 +1,19 @@
+# Argo CD Application for PostgreSQL (Airflow metadata). Synced manually for now (see infra/README.md).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgres
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wattlake
+  # Kustomize directory: the manifests of infra/postgres, as "kubectl apply -k" did.
+  source:
+    repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+    targetRevision: main
+    path: infra/postgres
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,28 @@
+# Argo CD Application for SeaweedFS (S3 object storage). Synced manually for now (see infra/README.md).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: seaweedfs
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wattlake
+  sources:
+    # The chart, at its pinned version. releaseName keeps the resource names of
+    # the former Helm release, so that Argo CD takes over the existing objects.
+    - repoURL: https://seaweedfs.github.io/seaweedfs/helm
+      chart: seaweedfs
+      targetRevision: 4.52.0
+      helm:
+        releaseName: seaweedfs
+        valueFiles:
+          - $values/infra/seaweedfs/values.yaml
+    # This repository, referenced as $values for the values file above.
+    - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
