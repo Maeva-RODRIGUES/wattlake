@@ -21,9 +21,19 @@ spec:
             - name: postgres
               containerPort: 5432
           env:
-            # DEVELOPMENT ONLY: fake placeholder password, replaced by a real secret at step 4.4.
+            # Passwords from a Secret created by "make secrets", outside Git
+            # (see docs/adr/006-gestion-des-secrets.md). Both are only read by
+            # initdb, on an empty data directory.
             - name: POSTGRES_PASSWORD
-              value: postgres-dev
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: postgres-password
+            - name: AIRFLOW_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: airflow-password
             # Subdirectory of the volume, so initdb always starts from an empty directory.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
@@ -52,6 +62,8 @@ spec:
         - name: initdb
           configMap:
             name: postgres-initdb
+            # Executable: the entrypoint runs it instead of sourcing it.
+            defaultMode: 0555
   # The PVC outlives the StatefulSet: deleting it is the only way to wipe the data.
   volumeClaimTemplates:
     - metadata:

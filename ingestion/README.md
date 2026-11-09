@@ -55,7 +55,7 @@ Le DAG ([dags/dbt_transformations.py](dags/dbt_transformations.py)) construit le
 - **Même profil qu'en local** : la tâche fixe `TRINO_HOST` et `TRINO_PORT` sur le service Trino du cluster.
 - Le nom et l'URI de l'Asset sont définis dans `wattlake_ingestion.lakehouse`, module sans import lourd, que les deux DAG importent.
 
-Le catalogue `wattlake` est configuré par les variables d'environnement `PYICEBERG_CATALOG__WATTLAKE__*`, définies dans `infra/airflow/values.yaml`.
+Le catalogue `wattlake` est configuré par les variables d'environnement `PYICEBERG_CATALOG__WATTLAKE__*`, définies dans `infra/airflow/values.yaml`. Les clés S3 sont celles de l'identité SeaweedFS `airflow`, lues dans le Secret `airflow-credentials` (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)).
 
 ### Recharger tout l'historique
 

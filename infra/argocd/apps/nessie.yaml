@@ -1,4 +1,4 @@
-# Argo CD Application for Nessie (Iceberg catalog) and its S3 credentials Secret. Synced automatically from the main branch.
+# Argo CD Application for Nessie (Iceberg catalog). Synced automatically from the main branch.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -23,12 +23,6 @@ spec:
     - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
       targetRevision: main
       ref: values
-    # Plain manifests next to the values file.
-    - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
-      targetRevision: main
-      path: infra/nessie
-      directory:
-        include: s3-credentials.yaml
   # Automated sync: the cluster follows the main branch. prune deletes what is
   # removed from Git, selfHeal reverts changes made by hand in the cluster.
   syncPolicy:

@@ -53,8 +53,7 @@ catalogs:
   # Second demo catalog from the chart defaults: not needed.
   tpcds: null
   # Iceberg tables: Nessie native API as catalog (see ADR 002), SeaweedFS as storage.
-  # DEVELOPMENT ONLY: placeholder S3 credentials from infra/seaweedfs/values.yaml,
-  # moved to a Kubernetes Secret at step 4.4.
+  # Trino's own S3 identity, read from the environment variables defined below.
   iceberg: |
     connector.name=iceberg
     iceberg.catalog.type=nessie
@@ -65,5 +64,19 @@ catalogs:
     s3.endpoint=http://seaweedfs-s3:8333
     s3.region=us-east-1
     s3.path-style-access=true
-    s3.aws-access-key=wattlake-dev-admin-access-key
-    s3.aws-secret-key=wattlake-dev-admin-secret-key
+    s3.aws-access-key=${ENV:S3_ACCESS_KEY_ID}
+    s3.aws-secret-key=${ENV:S3_SECRET_ACCESS_KEY}
+
+# S3 keys of the "trino" SeaweedFS identity, on the coordinator and the workers.
+# The Secret is created by "make secrets", outside Git (see docs/adr/006-gestion-des-secrets.md).
+env:
+  - name: S3_ACCESS_KEY_ID
+    valueFrom:
+      secretKeyRef:
+        name: trino-credentials
+        key: s3-access-key-id
+  - name: S3_SECRET_ACCESS_KEY
+    valueFrom:
+      secretKeyRef:
+        name: trino-credentials
+        key: s3-secret-access-key

@@ -27,12 +27,14 @@ catalog:
         endpoint: http://seaweedfs-s3:8333
         pathStyleAccess: true
         region: us-east-1
-        # Nessie writes table metadata with its own static keys.
+        # Nessie writes table metadata with its own static keys: the "nessie"
+        # SeaweedFS identity, from a Secret created by "make secrets", outside
+        # Git (see docs/adr/006-gestion-des-secrets.md).
         authType: STATIC
         accessKeySecret:
-          name: nessie-s3-credentials
-          awsAccessKeyId: access-key-id
-          awsSecretAccessKey: secret-access-key
+          name: nessie-credentials
+          awsAccessKeyId: s3-access-key-id
+          awsSecretAccessKey: s3-secret-access-key
         # Clients use their own S3 keys: no request signing, and no vended
         # credentials (clientIam stays disabled), which would need STS.
         requestSigningEnabled: false

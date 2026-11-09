@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# Creates the stack's credentials as Kubernetes Secrets, with random values
+# generated on this machine (see docs/adr/006-gestion-des-secrets.md).
+# Git only holds the Secret names: the values never leave the cluster.
+#
+# All or nothing: the Secrets share values (each S3 key pair is both in its
+# component's Secret and in the SeaweedFS configuration; the airflow role
+# password is both in PostgreSQL's Secret and in Airflow's connection URL).
+#   - none exists: all are created;
+#   - all exist: nothing changes, existing values are kept;
+#   - some exist: the script stops, as new values would not match the others.
+#
+# Usage: make secrets
+set -euo pipefail
+
+CONTEXT="k3d-wattlake"
+NAMESPACE="wattlake"
+SECRETS=(seaweedfs-s3-config nessie-credentials trino-credentials postgres-credentials airflow-credentials)
+LABEL="app.kubernetes.io/part-of=wattlake"
+
+kubectl_ns() {
+    kubectl --context "$CONTEXT" --namespace "$NAMESPACE" "$@"
+}
+
+existing=()
+for name in "${SECRETS[@]}"; do
+    # Command substitution, not a redirection: a confined kubectl (snap) prints
+    # nothing when its output is redirected to a file.
+    if [ -n "$(kubectl_ns get secret "$name" --ignore-not-found --output name)" ]; then
+        existing+=("$name")
+    fi
+done
+
+if [ "${#existing[@]}" -eq "${#SECRETS[@]}" ]; then
+    echo "All ${#SECRETS[@]} Secrets already exist in namespace ${NAMESPACE}: nothing to do."
+    exit 0
+fi
+if [ "${#existing[@]}" -gt 0 ]; then
+    echo "Only some Secrets exist (${existing[*]}): new values would not match them." >&2
+    echo "Delete them all to generate a new set (see infra/README.md)." >&2
+    exit 1
+fi
+
+# Hexadecimal values: no character needs escaping in a URL, SQL or JSON.
+hex() { openssl rand -hex "$1"; }
+
+# One S3 identity per component (20-character access key, 40-character secret key).
+admin_access=$(hex 10) admin_secret=$(hex 20)
+nessie_access=$(hex 10) nessie_secret=$(hex 20)
+trino_access=$(hex 10) trino_secret=$(hex 20)
+airflow_access=$(hex 10) airflow_secret=$(hex 20)
+
+postgres_password=$(hex 24)
+airflow_db_password=$(hex 24)
+
+# Fernet key: 32 random bytes in url-safe base64, as Airflow expects.
+fernet_key=$(openssl rand -base64 32 | tr '+/' '-_')
+
+# SeaweedFS S3 identities. admin is kept for operations (it is used by no
+# component); each component can only read, write and list the warehouse bucket.
+bucket_rw='["Read:warehouse","Write:warehouse","List:warehouse"]'
+s3_config=$(cat <<EOF
+{"identities":[
+{"name":"admin","credentials":[{"accessKey":"${admin_access}","secretKey":"${admin_secret}"}],"actions":["Admin","Read","Write","List","Tagging"]},
+{"name":"nessie","credentials":[{"accessKey":"${nessie_access}","secretKey":"${nessie_secret}"}],"actions":${bucket_rw}},
+{"name":"trino","credentials":[{"accessKey":"${trino_access}","secretKey":"${trino_secret}"}],"actions":${bucket_rw}},
+{"name":"airflow","credentials":[{"accessKey":"${airflow_access}","secretKey":"${airflow_secret}"}],"actions":${bucket_rw}}
+]}
+EOF
+)
+
+if [ -z "$(kubectl --context "$CONTEXT" get namespace "$NAMESPACE" --ignore-not-found --output name)" ]; then
+    kubectl --context "$CONTEXT" create namespace "$NAMESPACE"
+fi
+
+# Manifests sent on stdin: the values never appear on a command line.
+cat <<EOF | kubectl_ns create --filename -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seaweedfs-s3-config
+  labels: {app.kubernetes.io/part-of: wattlake}
+type: Opaque
+stringData:
+  seaweedfs_s3_config: '$(echo "$s3_config" | tr -d '\n')'
+  admin-access-key-id: ${admin_access}
+  admin-secret-access-key: ${admin_secret}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nessie-credentials
+  labels: {app.kubernetes.io/part-of: wattlake}
+type: Opaque
+stringData:
+  s3-access-key-id: ${nessie_access}
+  s3-secret-access-key: ${nessie_secret}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: trino-credentials
+  labels: {app.kubernetes.io/part-of: wattlake}
+type: Opaque
+stringData:
+  s3-access-key-id: ${trino_access}
+  s3-secret-access-key: ${trino_secret}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+  labels: {app.kubernetes.io/part-of: wattlake}
+type: Opaque
+stringData:
+  postgres-password: ${postgres_password}
+  airflow-password: ${airflow_db_password}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: airflow-credentials
+  labels: {app.kubernetes.io/part-of: wattlake}
+type: Opaque
+stringData:
+  # Key names expected by the Airflow chart (*SecretName values).
+  connection: postgresql://airflow:${airflow_db_password}@postgres.wattlake.svc.cluster.local:5432/airflow?sslmode=disable
+  fernet-key: ${fernet_key}
+  api-secret-key: $(hex 32)
+  jwt-secret: $(hex 32)
+  admin-password: $(hex 12)
+  s3-access-key-id: ${airflow_access}
+  s3-secret-access-key: ${airflow_secret}
+EOF
+
+kubectl_ns get secrets --selector "$LABEL"

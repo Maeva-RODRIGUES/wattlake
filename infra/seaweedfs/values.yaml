@@ -67,6 +67,11 @@ filer:
   s3:
     enabled: true
     enableAuth: true
+    # S3 identities (one per component) from a Secret created by "make secrets",
+    # outside Git (see docs/adr/006-gestion-des-secrets.md). Argo CD renders the
+    # chart without reading the cluster, so the pod checksum does not follow the
+    # Secret: after a change, restart the filer pod.
+    existingConfigSecret: seaweedfs-s3-config
     createBuckets:
       - name: warehouse
     # Short-lived Job that runs "weed shell" to create the buckets.
@@ -78,14 +83,3 @@ filer:
         limits:
           cpu: 200m
           memory: 128Mi
-
-s3:
-  # The chart reads S3 credentials from this top-level key, even when the gateway runs in the filer.
-  # DEVELOPMENT ONLY: fake placeholder credentials, replaced by real secrets at step 4.4.
-  credentials:
-    admin:
-      accessKey: wattlake-dev-admin-access-key
-      secretKey: wattlake-dev-admin-secret-key
-    read:
-      accessKey: wattlake-dev-read-access-key
-      secretKey: wattlake-dev-read-secret-key

@@ -70,8 +70,8 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 **Étape 3 : DataOps**
 - [x] Intégration continue avec GitHub Actions (ADR 005) : lint, tests Python, validation dbt, construction et publication de l'image Airflow
 - [x] Déploiement GitOps avec Argo CD
+- [x] Identifiants déplacés dans des Secrets Kubernetes, générés hors du dépôt, avec une identité S3 par composant (ADR 006)
 - [ ] Write-Audit-Publish : écriture sur une branche Nessie, contrôles qualité, puis fusion dans `main`
-- [ ] Identifiants déplacés dans des Secrets Kubernetes
 
 **Étape 4 : temps réel et observabilité**
 - [ ] Flux temps réel : API, Kafka, Iceberg
@@ -107,13 +107,13 @@ Sans direnv, exporter à la main les quatre variables de [`.envrc.example`](.env
 ### Lancer la stack
 
 ```bash
-make up                 # cluster k3d, Argo CD, puis les Applications de la stack
+make up                 # cluster k3d, Secrets, Argo CD, puis les Applications de la stack
 make smoke-test         # test de bout en bout
 make rest-catalog-test  # écriture PyIceberg par le catalogue REST, lue depuis Trino
 make dbt ARGS="debug"   # projet dbt : configuration et connexion à Trino (voir transform/README.md)
 ```
 
-`make up` crée le cluster, installe Argo CD, puis lui confie l'Application racine. Argo CD déploie ensuite SeaweedFS, PostgreSQL, Nessie, Trino et Airflow depuis la branche `main` du dépôt, et les maintient synchronisés : un changement fait à la main dans le cluster est annulé (voir [infra/README.md](infra/README.md)). `make up` peut être relancé : il ne recrée pas le cluster existant.
+`make up` crée le cluster et les Secrets de la stack, installe Argo CD, puis lui confie l'Application racine. Les identifiants (clés S3, mots de passe, clés d'Airflow) sont tirés au hasard sur le poste par `make secrets` : ils ne sont jamais écrits dans le dépôt (voir l'[ADR 006](docs/adr/006-gestion-des-secrets.md)). Argo CD déploie ensuite SeaweedFS, PostgreSQL, Nessie, Trino et Airflow depuis la branche `main` du dépôt, et les maintient synchronisés : un changement fait à la main dans le cluster est annulé (voir [infra/README.md](infra/README.md)). `make up` peut être relancé : il ne recrée pas le cluster existant.
 
 ### Déployer une modification
 
@@ -159,7 +159,11 @@ kubectl --context k3d-wattlake -n wattlake exec -it deploy/trino-coordinator -- 
 # Interfaces web, chacune dans son terminal
 kubectl --context k3d-wattlake -n wattlake port-forward svc/trino 8080:8080     # Trino : http://127.0.0.1:8080
 kubectl --context k3d-wattlake -n wattlake port-forward svc/nessie 19120:19120  # Nessie : http://127.0.0.1:19120
-kubectl --context k3d-wattlake -n wattlake port-forward svc/airflow-api-server 8081:8080  # Airflow : http://127.0.0.1:8081 (admin / admin-dev)
+kubectl --context k3d-wattlake -n wattlake port-forward svc/airflow-api-server 8081:8080  # Airflow : http://127.0.0.1:8081
+
+# Mot de passe de l'utilisateur « admin » d'Airflow
+kubectl --context k3d-wattlake -n wattlake get secret airflow-credentials \
+  -o jsonpath='{.data.admin-password}' | base64 --decode
 ```
 
 Une fois la chaîne passée, la part des renouvelables se lit dans la couche gold :
@@ -224,13 +228,14 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 003 : base de métadonnées d'Airflow](docs/adr/003-base-metadonnees-airflow.md), ou pourquoi une image PostgreSQL officielle plutôt que celle embarquée par le chart.
 - [ADR 004 : catalogue REST Iceberg pour l'ingestion](docs/adr/004-catalogue-rest-ingestion.md), qui remplace l'ADR 002 : pourquoi PyIceberg écrit par le catalogue REST de Nessie avec ses propres clés S3, pendant que Trino reste sur l'API native.
 - [ADR 005 : plateforme d'intégration continue](docs/adr/005-integration-continue.md), ou pourquoi GitHub Actions plutôt que GitLab CI, dont la CI pour un dépôt GitHub est réservée aux offres payantes.
+- [ADR 006 : gestion des secrets](docs/adr/006-gestion-des-secrets.md), ou pourquoi des Secrets générés hors du dépôt plutôt que Sealed Secrets, SOPS ou External Secrets, sur un cluster local recréé à volonté.
 
 ## Ce que je ferais en production
 
 Ce projet tourne en local, avec des choix simplifiés. Sur une plateforme en production, je prévoirais en plus :
 
 - un stockage persistant pour Nessie (PostgreSQL), au lieu du stockage en mémoire utilisé pour démarrer ;
-- une gestion des secrets centralisée, par exemple avec un coffre-fort de secrets ;
+- une gestion des secrets centralisée : External Secrets et le gestionnaire de secrets du cloud, à la place de `make secrets` (voir l'ADR 006) ;
 - de la haute disponibilité sur le stockage objet et sur le coordinateur Trino ;
 - de la supervision et des alertes sur la fraîcheur et la qualité des données.
 

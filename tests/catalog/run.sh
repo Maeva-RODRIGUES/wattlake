@@ -24,10 +24,17 @@ PYTHON_IMAGE="python:3.13.13-slim"
 PIP_CONSTRAINTS="https://raw.githubusercontent.com/apache/airflow/constraints-3.2.2/constraints-3.13.txt"
 PIP_PACKAGES="pyiceberg[pyarrow]==0.12.0 pyarrow==24.0.0 s3fs==2026.4.0"
 
-# DEVELOPMENT ONLY: fake placeholder credentials from infra/seaweedfs/values.yaml,
-# replaced by a dedicated SeaweedFS identity at step 4.4.
-S3_ACCESS_KEY_ID="wattlake-dev-admin-access-key"
-S3_SECRET_ACCESS_KEY="wattlake-dev-admin-secret-key"
+# The pod uses Airflow's SeaweedFS identity, as the ingestion does. Its keys are
+# read from the airflow-credentials Secret by the pod itself (secretKeyRef):
+# they never leave the cluster. The strategic merge adds them to the container
+# that kubectl run generates.
+OVERRIDES=$(cat <<'JSON'
+{"spec": {"containers": [{"name": "rest-catalog-test", "env": [
+  {"name": "S3_ACCESS_KEY_ID", "valueFrom": {"secretKeyRef": {"name": "airflow-credentials", "key": "s3-access-key-id"}}},
+  {"name": "S3_SECRET_ACCESS_KEY", "valueFrom": {"secretKeyRef": {"name": "airflow-credentials", "key": "s3-secret-access-key"}}}
+]}]}}
+JSON
+)
 
 # UTC start time: Nessie commits must be newer, so a previous run cannot make this one pass.
 STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
@@ -38,8 +45,7 @@ echo "==> PyIceberg: writing ${TABLE} through the REST catalog"
 cat "$SCRIPT" | kubectl --context "$CONTEXT" --namespace "$NAMESPACE" run rest-catalog-test \
     --image="$PYTHON_IMAGE" --restart=Never --rm --stdin --quiet \
     --env="NESSIE_ICEBERG_URI=http://nessie:19120/iceberg" \
-    --env="S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \
-    --env="S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}" \
+    --override-type=strategic --overrides="$OVERRIDES" \
     --command -- sh -c "pip install --quiet --no-cache-dir --root-user-action=ignore --disable-pip-version-check --constraint ${PIP_CONSTRAINTS} ${PIP_PACKAGES} && python -"
 
 echo "==> Trino: reading ${TABLE} through the native Nessie API"

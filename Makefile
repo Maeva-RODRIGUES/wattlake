@@ -15,6 +15,10 @@ ARGOCD_VERSION      := 10.11.1
 ARGOCD_VALUES       := infra/argocd/values.yaml
 ARGOCD_ROOT_APP     := infra/argocd/root.yaml
 
+# Credentials: random values created as Kubernetes Secrets, never stored in Git
+# (see docs/adr/006-gestion-des-secrets.md).
+SECRETS_SCRIPT      := infra/secrets/create.sh
+
 # Custom Airflow image (ingestion/Dockerfile). The CI builds and publishes it
 # as ghcr.io/<owner>/wattlake-airflow:<commit SHA>; the deployed tag is set in
 # infra/airflow/values.yaml. These defaults only name local test builds.
@@ -40,17 +44,18 @@ RUFF_VERSION        := 0.17.2
 PYTHON_SOURCES      := ingestion tests/catalog tools
 
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
-	argocd-up argocd-apps airflow-image smoke-test rest-catalog-test screenshots ingestion-test \
+	secrets argocd-up argocd-apps airflow-image smoke-test rest-catalog-test screenshots ingestion-test \
 	transform-lock dbt lint dbt-parse
 
 VENV                := .venv
 # Browsers downloaded by Playwright stay inside the project virtual environment.
 export PLAYWRIGHT_BROWSERS_PATH := $(CURDIR)/$(VENV)/ms-playwright
 
-## Create the cluster, install Argo CD, then hand it the stack. Sequential
-## sub-makes keep the order even when make runs with -j.
+## Create the cluster and the Secrets, install Argo CD, then hand it the stack.
+## Sequential sub-makes keep the order even when make runs with -j.
 up: check-kubeconfig check-helm-env
 	$(MAKE) cluster-up
+	$(MAKE) secrets
 	$(MAKE) argocd-up
 	$(MAKE) argocd-apps
 
@@ -94,6 +99,11 @@ cluster-stop: check-kubeconfig
 ## Restart a previously stopped cluster.
 cluster-start: check-kubeconfig
 	k3d cluster start $(CLUSTER_NAME)
+
+## Create the stack's Secrets with random values, all at once and only if none
+## exists: existing values are never replaced.
+secrets: check-kubeconfig
+	bash $(SECRETS_SCRIPT)
 
 ## Install or upgrade Argo CD (web interface on port 80 of argocd-server, see README).
 argocd-up: check-kubeconfig check-helm-env

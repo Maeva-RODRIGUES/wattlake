@@ -1,12 +1,19 @@
-# SQL run by the postgres image entrypoint, only when the data directory is empty.
-# Changing this file has no effect on an existing volume.
+# Script run by the postgres image entrypoint, only when the data directory is empty.
+# Changing this file, or the password in the Secret, has no effect on an existing
+# volume: change the password with ALTER ROLE instead (see infra/README.md).
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postgres-initdb
 data:
-  01-airflow.sql: |
-    -- DEVELOPMENT ONLY: fake placeholder password, replaced by a real secret at step 4.4.
-    CREATE ROLE airflow WITH LOGIN PASSWORD 'airflow-dev';
+  01-airflow.sh: |
+    #!/usr/bin/env bash
+    # The password comes from the postgres-credentials Secret (AIRFLOW_DB_PASSWORD),
+    # passed as a psql variable: :'airflow_password' quotes it as an SQL literal.
+    set -euo pipefail
+    psql --username "$POSTGRES_USER" --set ON_ERROR_STOP=1 \
+        --set airflow_password="$AIRFLOW_DB_PASSWORD" <<'SQL'
+    CREATE ROLE airflow WITH LOGIN PASSWORD :'airflow_password';
     -- The owner gets full rights on the database and its public schema, and nothing else.
     CREATE DATABASE airflow OWNER airflow;
+    SQL

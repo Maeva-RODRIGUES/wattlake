@@ -93,31 +93,27 @@ env:
     value: rest
   - name: PYICEBERG_CATALOG__WATTLAKE__URI
     value: http://nessie:19120/iceberg
-  # DEVELOPMENT ONLY: fake placeholder credentials from infra/seaweedfs/values.yaml,
-  # replaced by a dedicated SeaweedFS identity in a Secret at step 4.4.
-  - name: PYICEBERG_CATALOG__WATTLAKE__S3__ACCESS_KEY_ID
-    value: wattlake-dev-admin-access-key
-  - name: PYICEBERG_CATALOG__WATTLAKE__S3__SECRET_ACCESS_KEY
-    value: wattlake-dev-admin-secret-key
+# Keys of the "airflow" SeaweedFS identity, in every Airflow container.
+secret:
+  - envName: PYICEBERG_CATALOG__WATTLAKE__S3__ACCESS_KEY_ID
+    secretName: airflow-credentials
+    secretKey: s3-access-key-id
+  - envName: PYICEBERG_CATALOG__WATTLAKE__S3__SECRET_ACCESS_KEY
+    secretName: airflow-credentials
+    secretKey: s3-secret-access-key
 
+# Credentials from one Secret created by "make secrets", outside Git (see
+# docs/adr/006-gestion-des-secrets.md), under the key names the chart expects:
+# connection, fernet-key, api-secret-key and jwt-secret. With these names set,
+# the chart no longer generates its own Secrets.
+# - connection: URL of the airflow database in infra/postgres, with its password.
+# - fernet-key: encrypts connections and variables stored in the database.
+# - api-secret-key and jwt-secret: sign sessions and API tokens.
 data:
-  metadataConnection:
-    user: airflow
-    # DEVELOPMENT ONLY: fake placeholder password, replaced by a real secret at step 4.4.
-    pass: airflow-dev
-    protocol: postgresql
-    host: postgres.wattlake.svc.cluster.local
-    port: 5432
-    db: airflow
-    sslmode: disable
-
-# DEVELOPMENT ONLY: fake placeholder keys, replaced by real secrets at step 4.4.
-# Fixed values keep "helm upgrade" idempotent: generated keys would change on
-# every upgrade, restart the pods and invalidate sessions and tokens.
-# The Fernet key encrypts connections stored in the database (32 bytes, url-safe base64).
-fernetKey: d2F0dGxha2UtZGV2LWZlcm5ldC1rZXktMzItYnl0ZXM=
-apiSecretKey: wattlake-dev-api-secret-key
-jwtSecret: wattlake-dev-jwt-secret
+  metadataSecretName: airflow-credentials
+fernetKeySecretName: airflow-credentials
+apiSecretKeySecretName: airflow-credentials
+jwtSecretName: airflow-credentials
 
 # Run the migration and user creation as regular Jobs instead of post-install
 # hooks: with "helm --wait", pods wait for the migration while the hooks only
@@ -147,6 +143,33 @@ createUserJob:
   jobAnnotations:
     argocd.argoproj.io/hook: Sync
   resources: *jobResources
-  defaultUser:
-    # DEVELOPMENT ONLY: fake placeholder password for the local web interface.
-    password: admin-dev
+  # Password of the web interface's admin user, from the Secret. The chart's
+  # default arguments take it from the values file: they are replaced to read
+  # it from the environment. "users create" does nothing when the user exists,
+  # so "users reset-password" then applies the Secret's password on every sync.
+  env:
+    - name: AIRFLOW_ADMIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: airflow-credentials
+          key: admin-password
+  args:
+    - bash
+    - -c
+    - |-
+      set -euo pipefail
+      airflow users create "$@" --password "${AIRFLOW_ADMIN_PASSWORD}"
+      exec airflow users reset-password \
+        --username "{{ .Values.createUserJob.defaultUser.username }}" \
+        --password "${AIRFLOW_ADMIN_PASSWORD}"
+    - --
+    - --role
+    - "{{ .Values.createUserJob.defaultUser.role }}"
+    - --username
+    - "{{ .Values.createUserJob.defaultUser.username }}"
+    - --email
+    - "{{ .Values.createUserJob.defaultUser.email }}"
+    - --firstname
+    - "{{ .Values.createUserJob.defaultUser.firstName }}"
+    - --lastname
+    - "{{ .Values.createUserJob.defaultUser.lastName }}"
