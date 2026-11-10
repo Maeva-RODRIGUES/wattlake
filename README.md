@@ -215,6 +215,7 @@ Le reste se met à jour à la main, en vérifiant que chaque version a au moins 
 ```bash
 make cluster-stop    # arrête les conteneurs du cluster, les données sont conservées
 make cluster-start   # redémarre le cluster
+make cluster-restart # arrête puis redémarre le cluster (après un changement de réseau, voir infra/README.md)
 make down            # supprime le cluster et toutes ses données (alias de cluster-down)
 ```
 

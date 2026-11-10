@@ -1,6 +1,6 @@
 # infra
 
-Déploiement de la stack sur Kubernetes : configuration du cluster k3d, valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
+Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
 
 ## GitOps avec Argo CD
 
@@ -78,3 +78,21 @@ Une seule instance, avec une base par composant, chacune propriété de son rôl
 - `nessie` : le version store de Nessie, en JDBC2 (voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)). Nessie crée ses tables (`refs2`, `objs2`) au premier démarrage.
 
 Chaque base n'accepte que les connexions de son propriétaire (`REVOKE CONNECT ... FROM PUBLIC`) : le rôle `nessie` ne peut pas se connecter à la base `airflow`, ni l'inverse. Les rôles et les bases sont créés par les scripts de [postgres/initdb.yaml](postgres/initdb.yaml), qui ne s'exécutent que sur un volume vide.
+
+## Dépannage
+
+### Plus de résolution des noms externes après un changement de réseau
+
+**Symptômes** : après un redémarrage de l'ordinateur ou un changement de réseau (Wi-Fi, partage de connexion), les Applications Argo CD passent en `Unknown` avec `ComparisonError: ... failed to get git client for repo`, et les logs de `argocd-repo-server` montrent `lookup github.com on 10.43.0.10:53: server misbehaving`. Les noms internes au cluster (`nessie`, `trino`...) résolvent toujours : seuls les noms externes échouent, dont l'API ODRÉ du DAG bronze.
+
+**Cause** : CoreDNS transmet les noms externes au résolveur du nœud k3d, qui est le DNS intégré de Docker (`192.168.64.1`). Docker y inscrit les serveurs DNS de l'ordinateur au démarrage du conteneur, lus dans `/run/systemd/resolve/resolv.conf`, et ne les met plus à jour ensuite. Après un changement de réseau, le cluster interroge encore les serveurs de l'ancien réseau, qui ne répondent plus.
+
+**Vérifier** : `make cluster-dns-check`, en lecture seule. La cible compare les serveurs DNS de l'ordinateur à ceux utilisés par les nœuds (commentaire `ExtServers` de leur `/etc/resolv.conf`), puis résout `github.com` et `odre.opendatasoft.com` par CoreDNS. Elle échoue si un nom ne résout pas.
+
+**Corriger** : `make cluster-restart`, environ 2 à 3 minutes. Au démarrage des conteneurs, Docker relit les serveurs DNS de l'ordinateur. Aucune donnée n'est perdue : volumes conservés, catalogue Nessie dans PostgreSQL. Argo CD resynchronise ensuite tout seul.
+
+Deux corrections permanentes ont été écartées :
+
+- des serveurs DNS publics fixes dans CoreDNS (`1.1.1.1`, par exemple) : le cluster ne dépendrait plus du réseau local, mais les réseaux d'entreprise et les VPN bloquent souvent le DNS sortant, et toutes les requêtes partiraient chez un tiers ;
+- faire écouter systemd-resolved sur l'interface Docker, qui suit les changements de réseau : c'est une configuration système de l'ordinateur, hors du dépôt, donc non reproductible.
+

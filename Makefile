@@ -44,6 +44,7 @@ RUFF_VERSION        := 0.17.2
 PYTHON_SOURCES      := ingestion tests/catalog tools
 
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
+	cluster-restart cluster-dns-check \
 	secrets argocd-up argocd-apps airflow-image smoke-test rest-catalog-test screenshots ingestion-test \
 	transform-lock dbt lint dbt-parse
 
@@ -99,6 +100,17 @@ cluster-stop: check-kubeconfig
 ## Restart a previously stopped cluster.
 cluster-start: check-kubeconfig
 	k3d cluster start $(CLUSTER_NAME)
+
+## Stop then start the cluster, without losing any state. Also the fix when the
+## cluster no longer resolves external names after a network change: Docker
+## reads the host's DNS servers again when the node containers start.
+cluster-restart: check-kubeconfig
+	$(MAKE) cluster-stop
+	$(MAKE) cluster-start
+
+## Check that the cluster resolves external names (read-only). See infra/README.md, "Dépannage".
+cluster-dns-check:
+	bash infra/k3d/dns-check.sh
 
 ## Create the stack's Secrets with random values, by groups of Secrets that
 ## share values: a group is created only if none of its Secrets exists, so
