@@ -17,3 +17,16 @@ wattlake:
       database: iceberg
       schema: silver
       threads: 4
+    # Write-Audit-Publish (docs/adr/008-write-audit-publish.md): same Trino,
+    # catalog bound to the Nessie branch "audit". Used by the
+    # dbt_transformations DAG, which merges the branch into main after the tests.
+    audit:
+      type: trino
+      method: none
+      user: wattlake
+      http_scheme: http
+      host: "{{ env_var('TRINO_HOST', 'localhost') }}"
+      port: "{{ env_var('TRINO_PORT', '8080') | as_number }}"
+      database: iceberg_audit
+      schema: silver
+      threads: 4

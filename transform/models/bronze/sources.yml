@@ -6,7 +6,9 @@ sources:
       Raw eCO2mix data, loaded by the Airflow DAG eco2mix_history_to_bronze
       (ingestion/). Values are kept as the source publishes them: see
       docs/sources.md for the fields, units and known quirks.
-    database: iceberg
+    # Catalog of the target: bronze is read on the branch dbt writes to, so
+    # the audit branch is built from the bronze snapshot it was created with.
+    database: "{{ target.database }}"
     schema: bronze
     tables:
       - name: eco2mix_national_history

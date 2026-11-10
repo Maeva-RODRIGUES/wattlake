@@ -50,6 +50,14 @@ Le DAG ([dags/eco2mix_history_to_bronze.py](dags/eco2mix_history_to_bronze.py)) 
 
 Le DAG ([dags/dbt_transformations.py](dags/dbt_transformations.py)) construit les couches silver et gold avec un `dbt build`, qui lance aussi les tests. Il est planifié sur l'Asset de la table bronze, et non sur un horaire : il ne tourne que lorsque bronze a changé. Pendant un rattrapage, les événements accumulés sont consommés par une seule exécution.
 
+Il applique le Write-Audit-Publish sur une branche Nessie (voir l'[ADR 008](../docs/adr/008-write-audit-publish.md)) :
+
+1. `create_audit_branch` recrée la branche `audit` depuis la tête de `main` ;
+2. `dbt_build` lance `dbt build --target audit` : silver et gold sont écrits et testés sur la branche, par le catalogue Trino `iceberg_audit` ;
+3. `publish` fusionne `audit` dans `main` en un commit, seulement si tous les tests passent.
+
+Après un test en échec, `main` reste inchangé et la branche `audit` garde le build fautif, interrogeable dans Trino (`iceberg_audit.silver.*`, `iceberg_audit.gold.*`) jusqu'à l'exécution suivante. Le client Nessie, dans `wattlake_ingestion.nessie`, appelle l'API REST v2 avec `httpx`.
+
 - **dbt isolé** : dbt tourne dans son propre environnement virtuel de l'image (`/opt/dbt/venv`), installé depuis `transform/requirements.txt`. Ses versions figées diffèrent des contraintes d'Airflow pour 26 paquets communs : les deux ne peuvent pas partager un environnement.
 - **Projet dbt dans l'image** : le projet et ses paquets (`dbt deps`, exécuté à la construction) sont copiés dans `/opt/wattlake/transform`. Les fichiers produits par dbt (`target/`, `logs/`) vont dans `/tmp/dbt`.
 - **Même profil qu'en local** : la tâche fixe `TRINO_HOST` et `TRINO_PORT` sur le service Trino du cluster.

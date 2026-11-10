@@ -13,12 +13,13 @@ make dbt ARGS="build"                        # modèles et tests (à partir de l
 La cible crée au besoin `transform/.venv` avec [uv](https://docs.astral.sh/uv/), en Python 3.13.13 comme l'image Airflow, à partir de `requirements.txt`. Elle lance ensuite dbt par [run.sh](run.sh), qui ouvre une redirection de port temporaire vers le service Trino du cluster (port local 18081), puis la referme à la fin, même en cas d'erreur.
 
 - **Profil versionné** : [profiles.yml](profiles.yml) est dans le projet, passé à dbt par `--profiles-dir`, plutôt que dans `~/.dbt`. L'hôte et le port viennent des variables `TRINO_HOST` et `TRINO_PORT`, ce qui permettra d'utiliser le même profil depuis Airflow (étape 3.5).
+- **Deux cibles** : `dev` (par défaut) écrit dans le catalogue Trino `iceberg`, donc directement sur la branche `main` ; `audit` écrit dans `iceberg_audit`, sur la branche `audit`, celle du Write-Audit-Publish. La source bronze suit la cible. `make dbt ARGS="build --target audit"` teste un build sans toucher `main`, si la branche `audit` existe.
 - **Source** : la table bronze est déclarée dans [models/bronze/sources.yml](models/bronze/sources.yml). Ses particularités, dont les 60 lignes artificielles du passage à l'heure d'été, sont décrites dans [docs/sources.md](../docs/sources.md).
 - **Statistiques d'usage désactivées** (`send_anonymous_usage_stats: false`), et vérification des certificats activée dès maintenant (`require_certificate_validation: true`). `dbt debug` affiche encore l'avertissement sur les certificats, car il teste la connexion avant de lire les réglages du projet. Les autres commandes ne l'affichent plus.
 
 ## Exécution par Airflow
 
-Dans le cluster, le DAG `dbt_transformations` lance `dbt build` chaque fois que la table bronze change (voir [ingestion/README.md](../ingestion/README.md)). L'image Airflow contient :
+Dans le cluster, le DAG `dbt_transformations` lance `dbt build --target audit` chaque fois que la table bronze change, puis fusionne la branche Nessie `audit` dans `main` si les tests passent (Write-Audit-Publish, voir l'[ADR 008](../docs/adr/008-write-audit-publish.md) et [ingestion/README.md](../ingestion/README.md)). L'image Airflow contient :
 
 - un environnement virtuel dbt dédié, `/opt/dbt/venv`, installé depuis [requirements.txt](requirements.txt), séparé de celui d'Airflow dont les contraintes diffèrent pour 26 paquets communs ;
 - ce projet, dans `/opt/wattlake/transform`, avec `dbt_utils` déjà installé par `dbt deps` à la construction de l'image.

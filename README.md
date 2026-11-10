@@ -72,7 +72,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 - [x] Déploiement GitOps avec Argo CD
 - [x] Identifiants déplacés dans des Secrets Kubernetes, générés hors du dépôt, avec une identité S3 par composant (ADR 006)
 - [x] Catalogue Nessie persistant, stocké dans PostgreSQL (ADR 007)
-- [ ] Write-Audit-Publish : écriture sur une branche Nessie, contrôles qualité, puis fusion dans `main`
+- [x] Write-Audit-Publish : écriture sur une branche Nessie, contrôles qualité, puis fusion dans `main` (ADR 008)
 
 **Étape 4 : temps réel et observabilité**
 - [ ] Flux temps réel : API, Kafka, Iceberg
