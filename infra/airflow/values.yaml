@@ -50,7 +50,12 @@ dagProcessor:
       cpu: 100m
       memory: 256Mi
     limits:
-      cpu: 500m
+      # Not 500m: the liveness probe starts a full Airflow CLI ("airflow jobs
+      # check") in the same container. At 500m the container was throttled in
+      # every CFS period during the probe, which took about 6 s at rest and
+      # over its 20 s timeout under load, so the kubelet restarted it 10 times
+      # in 20 hours. Same limit as the scheduler and the API server.
+      cpu: "1"
       memory: 1Gi
   logGroomerSidecar:
     resources: *logGroomerResources
