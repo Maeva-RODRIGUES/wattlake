@@ -95,19 +95,18 @@ Deux réglages d'Argo CD sont propres à Strimzi :
 
 ## Producteur temps réel
 
-[streaming/](streaming/) déploie le producteur ([../streaming/README.md](../streaming/README.md), ADR 009) : un `Deployment` à un réplica, en stratégie `Recreate` pour ne jamais faire tourner deux producteurs à la fois.
+[streaming/](streaming/) déploie le producteur ([../streaming/README.md](../streaming/README.md), ADR 009) : un `Deployment` à un réplica, en stratégie `Recreate` pour ne jamais faire tourner deux producteurs à la fois. L'Application Argo CD `streaming` le synchronise depuis la branche `main`.
 
 - **Sécurité** : utilisateur non root (10001), système de fichiers en lecture seule, toutes les capacités Linux retirées. Seul `/tmp` est accessible en écriture (un `emptyDir`), pour le fichier de heartbeat.
 - **Sonde de vie** : le producteur n'expose aucun port. Il touche un fichier à chaque cycle, et la sonde (`python -m wattlake_streaming.health`) échoue si ce fichier a plus de 15 minutes, soit trois cycles. Une panne de l'API ne la déclenche pas : le fichier est touché même quand le cycle est sauté.
 - **Ressources** : 256 Mi au plus. Le premier démarrage, qui publie tout le jeu (environ 6 900 lignes), monte à environ 85 Mi.
-- **Image** : construite localement pour l'instant, chargée dans k3d et appliquée à la main :
+- **Image** : `ghcr.io/maeva-rodrigues/wattlake-producer`, publiée par la CI, avec le SHA du commit comme tag, fixé dans [streaming/kustomization.yaml](streaming/kustomization.yaml). Comme pour Airflow, déployer une nouvelle version, c'est changer ce tag dans un commit à part.
+
+Pour essayer une modification avant de la commiter, on peut construire l'image en local, la charger dans k3d, puis l'appliquer à la main avec le tag `local`. Argo CD remet l'image de `main` à la synchronisation suivante, à cause de `selfHeal` : il faut donc suspendre la synchronisation automatique de l'Application `streaming` le temps de l'essai.
 
 ```bash
 make producer-image producer-image-import
-kubectl --context k3d-wattlake apply --kustomize infra/streaming
 ```
-
-Une fois l'image publiée par la CI sur `ghcr.io/maeva-rodrigues/wattlake-producer`, une Application Argo CD reprendra ce dossier, avec le SHA du commit comme tag.
 
 ## Dépannage
 

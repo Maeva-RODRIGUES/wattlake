@@ -1,9 +1,5 @@
 # Real-time producer (streaming/README.md).
-# The image is the local build for now, loaded into k3d with
-# "make producer-image producer-image-import" and applied with
-# "kubectl --context k3d-wattlake apply --kustomize infra/streaming".
-# Once the CI has published it, the image becomes ghcr.io with the commit SHA as
-# tag, and an Argo CD Application deploys this directory.
+# Deployed by Argo CD (infra/argocd/apps/streaming.yaml), from the main branch.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: wattlake
@@ -15,5 +11,9 @@ labels:
 resources:
   - deployment.yaml
 images:
+  # Image built and published by the CI (job "Producer image"); the tag is the
+  # SHA of the commit it was built from. To deploy a new version, change the
+  # tag in a commit of its own.
   - name: wattlake-producer
-    newTag: local
+    newName: ghcr.io/maeva-rodrigues/wattlake-producer
+    newTag: 1bf5ae9dfa3af4e60bb5d83057d720be03a4784f
