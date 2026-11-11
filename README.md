@@ -79,7 +79,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 - [x] Write-Audit-Publish : écriture sur une branche Nessie, contrôles qualité, puis fusion dans `main` (ADR 008)
 
 **Étape 4 : temps réel et observabilité**
-- [ ] Flux temps réel : API, Kafka, Iceberg
+- [x] Flux temps réel : API, Kafka, Iceberg (ADR 009 et 010)
 - [ ] Métriques et logs des traitements
 
 ## Démarrer

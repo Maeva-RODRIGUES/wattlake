@@ -1,4 +1,4 @@
-# Real-time pipeline (streaming/README.md): the producer, and soon the writer.
+# Real-time pipeline (streaming/README.md): the producer and the writer.
 # Deployed by Argo CD (infra/argocd/apps/streaming.yaml), from the main branch.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -9,9 +9,10 @@ labels:
     includeSelectors: true
 resources:
   - producer.yaml
+  - writer.yaml
 images:
   # Image built and published by the CI; the tag is the SHA of the commit it
   # was built from. To deploy a new version, change it in a commit of its own.
   - name: wattlake-streaming
-    newName: ghcr.io/maeva-rodrigues/wattlake-producer
-    newTag: 1bf5ae9dfa3af4e60bb5d83057d720be03a4784f
+    newName: ghcr.io/maeva-rodrigues/wattlake-streaming
+    newTag: ca29f37c5d4c01eef5fea7b169e2c50668b1b044

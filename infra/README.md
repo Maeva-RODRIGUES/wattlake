@@ -101,14 +101,14 @@ Deux réglages d'Argo CD sont propres à Strimzi :
 [streaming/](streaming/) déploie les deux composants du flux ([../streaming/README.md](../streaming/README.md)), synchronisés par l'Application Argo CD `streaming` depuis la branche `main` :
 
 - [producer.yaml](streaming/producer.yaml) : le producteur, de l'API vers Kafka (ADR 009) ;
-- [writer.yaml](streaming/writer.yaml) : le writer, de Kafka vers la table Iceberg `bronze.eco2mix_national_realtime` (ADR 010). Il n'est pas encore listé dans la kustomization : il le sera avec l'image qui le contient, publiée par la CI.
+- [writer.yaml](streaming/writer.yaml) : le writer, de Kafka vers la table Iceberg `bronze.eco2mix_national_realtime` (ADR 010).
 
 Les deux tournent dans la même image, chacun dans un `Deployment` à un réplica, en stratégie `Recreate` : deux producteurs publieraient chaque ligne deux fois, deux writers l'écriraient deux fois.
 
 - **Sécurité** : utilisateur non root (10001), système de fichiers en lecture seule, toutes les capacités Linux retirées. Seul `/tmp` est accessible en écriture (un `emptyDir`), pour le fichier de heartbeat. Le writer a sa propre identité S3, `streaming` (voir « Secrets »).
 - **Sonde de vie** : aucun des deux n'expose de port. Chacun touche un fichier à chaque cycle de 5 minutes, et la sonde (`python -m wattlake_streaming.health`) échoue si ce fichier a plus de 15 minutes. Une panne de l'API ne la déclenche pas : le fichier est touché même quand le cycle est sauté.
 - **Ressources** : 256 Mi au plus pour le producteur, dont le premier démarrage monte à environ 85 Mi ; 512 Mi pour le writer, qui charge PyArrow et écrit tout le topic au premier lot.
-- **Image** : `ghcr.io/maeva-rodrigues/wattlake-streaming`, publiée par la CI, avec le SHA du commit comme tag, fixé dans [streaming/kustomization.yaml](streaming/kustomization.yaml). Le producteur tourne encore sur l'image `wattlake-producer`, son ancien nom. Comme pour Airflow, déployer une nouvelle version, c'est changer ce tag dans un commit à part.
+- **Image** : `ghcr.io/maeva-rodrigues/wattlake-streaming`, publiée par la CI, avec le SHA du commit comme tag, fixé dans [streaming/kustomization.yaml](streaming/kustomization.yaml). Comme pour Airflow, déployer une nouvelle version, c'est changer ce tag dans un commit à part.
 
 Pour essayer une modification avant de la commiter, on peut construire l'image en local, la charger dans k3d, puis l'appliquer à la main avec le tag `local`. Argo CD remet l'image de `main` à la synchronisation suivante, à cause de `selfHeal` : il faut donc suspendre la synchronisation automatique de l'Application `streaming` le temps de l'essai.
 
