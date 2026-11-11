@@ -4,6 +4,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: producer
+  labels:
+    app.kubernetes.io/name: producer
 spec:
   # Exactly one producer: two would publish every row twice.
   replicas: 1
@@ -11,7 +13,14 @@ spec:
     # Stop the old pod before starting the new one, for the same reason. The
     # producer resumes from the topic, so the short gap loses nothing.
     type: Recreate
+  # Immutable once created (part-of is added by kustomization.yaml).
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: producer
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: producer
     spec:
       securityContext:
         runAsUser: 10001
@@ -24,7 +33,7 @@ spec:
       containers:
         - name: producer
           # Name and tag set by kustomization.yaml.
-          image: wattlake-producer
+          image: wattlake-streaming
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: wattlake-kafka-bootstrap:9092

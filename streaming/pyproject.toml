@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "wattlake-streaming"
-version = "0.1.0"
-description = "Producer publishing the RTE eCO2mix real-time data to Kafka"
+version = "0.2.0"
+description = "Real-time eCO2mix pipeline: producer to Kafka, writer from Kafka to Iceberg"
 license = "Apache-2.0"
-# Same Python as the python:3.13.17-slim image the producer runs in.
+# Same Python as the python:3.13.17-slim image it runs in.
 requires-python = ">=3.13"
 # Direct dependencies only; every package, transitive ones included, is pinned
 # with its hashes in requirements.txt (make streaming-lock).
@@ -15,12 +15,19 @@ dependencies = [
     # Python client built on librdkafka, the reference C client.
     "confluent-kafka==2.16.1",
     "httpx==0.28.1",
+    # Same versions as the ingestion package (ingestion/pyproject.toml).
+    "pyarrow==24.0.0",
+    "pyiceberg[pyarrow]==0.12.0",
+    # Nessie's REST catalog makes PyIceberg use FsspecFileIO, hence s3fs (ADR 004).
+    "s3fs==2026.4.0",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest==9.1.1",
     "respx==0.23.1",
+    # Local SQLite-backed Iceberg catalog for the writer tests.
+    "sqlalchemy==2.0.49",
 ]
 
 [tool.hatch.build.targets.wheel]

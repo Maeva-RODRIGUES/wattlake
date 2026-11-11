@@ -13,6 +13,9 @@
 #      SeaweedFS configuration; the airflow role password is both in
 #      PostgreSQL's Secret and in Airflow's connection URL.
 #   2. nessie-db: the nessie role, read by PostgreSQL and by Nessie.
+#   3. streaming: the S3 key pair of the real-time writer, both in its Secret
+#      and as an identity added to the SeaweedFS configuration of group 1
+#      (by add_s3_identity.py), so that it can be added to an existing cluster.
 #
 # Usage: make secrets
 set -euo pipefail
@@ -21,6 +24,7 @@ CONTEXT="k3d-wattlake"
 NAMESPACE="wattlake"
 STACK_SECRETS=(seaweedfs-s3-config nessie-credentials trino-credentials postgres-credentials airflow-credentials)
 NESSIE_DB_SECRETS=(nessie-db-credentials)
+STREAMING_SECRETS=(streaming-credentials)
 LABEL="app.kubernetes.io/part-of=wattlake"
 
 kubectl_ns() {
@@ -53,6 +57,7 @@ group_action() {
 # Both checks run before anything is created.
 stack_action=$(group_action stack "${STACK_SECRETS[@]}")
 nessie_db_action=$(group_action nessie-db "${NESSIE_DB_SECRETS[@]}")
+streaming_action=$(group_action streaming "${STREAMING_SECRETS[@]}")
 
 if [ -z "$(kubectl --context "$CONTEXT" get namespace "$NAMESPACE" --ignore-not-found --output name)" ]; then
     kubectl --context "$CONTEXT" create namespace "$NAMESPACE"
@@ -164,7 +169,40 @@ stringData:
 EOF
 }
 
-for group in stack nessie_db; do
+create_streaming() {
+local access secret
+access=$(hex 10) secret=$(hex 20)
+# First the SeaweedFS identity (created by group 1, just before): the keys go
+# through the environment and stdin, never on a command line. If the Secret
+# creation below fails, running the script again replaces the identity.
+local config
+# Command substitution, not a pipe from kubectl (see group_action).
+config=$(kubectl_ns get secret seaweedfs-s3-config --output json)
+printf '%s' "$config" \
+    | S3_IDENTITY=streaming S3_ACCESS="$access" S3_SECRET="$secret" python3 "$(dirname "$0")/add_s3_identity.py" \
+    | kubectl_ns replace --filename -
+
+cat <<EOF | kubectl_ns create --filename -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: streaming-credentials
+  labels: {app.kubernetes.io/part-of: wattlake}
+type: Opaque
+stringData:
+  s3-access-key-id: ${access}
+  s3-secret-access-key: ${secret}
+EOF
+
+# SeaweedFS reads its S3 identities at startup only (see infra/seaweedfs/values.yaml).
+if [ "$stack_action" = "skip" ]; then
+    echo "SeaweedFS identity added: restart the filer to load it:"
+    echo "  kubectl --context $CONTEXT --namespace $NAMESPACE rollout restart statefulset/seaweedfs-filer"
+fi
+}
+
+# stack first: the streaming group adds an identity to its SeaweedFS configuration.
+for group in stack nessie_db streaming; do
     action_var="${group}_action"
     if [ "${!action_var}" = "create" ]; then
         "create_${group}"

@@ -43,12 +43,12 @@ STREAMING_VENV      := $(STREAMING_DIR)/.venv
 # The image runs python:3.13.17-slim, rebuilt with Debian's security updates; the
 # tests run on 3.13.13, the latest 3.13 this uv version can install.
 STREAMING_PYTHON    := 3.13.13
-# Real-time producer image (streaming/Dockerfile). The CI builds and publishes it
-# as ghcr.io/<owner>/wattlake-producer:<commit SHA>. These defaults only name
-# local test builds, loaded into k3d by "make producer-image-import".
-PRODUCER_IMAGE_REPO ?= wattlake-producer
-PRODUCER_IMAGE_TAG  ?= local
-PRODUCER_IMAGE      := $(PRODUCER_IMAGE_REPO):$(PRODUCER_IMAGE_TAG)
+# Real-time image (streaming/Dockerfile): producer and writer. The CI builds and publishes it
+# as ghcr.io/<owner>/wattlake-streaming:<commit SHA>. These defaults only name
+# local test builds, loaded into k3d by "make streaming-image-import".
+STREAMING_IMAGE_REPO ?= wattlake-streaming
+STREAMING_IMAGE_TAG  ?= local
+STREAMING_IMAGE      := $(STREAMING_IMAGE_REPO):$(STREAMING_IMAGE_TAG)
 
 TRANSFORM_DIR       := transform
 TRANSFORM_VENV      := $(TRANSFORM_DIR)/.venv
@@ -58,13 +58,13 @@ TRANSFORM_PYTHON    := 3.13.13
 # Linter and formatter of every Python file (configuration: ruff.toml).
 # 0.17.2 (2026-10-22): latest release published at least two weeks before pinning.
 RUFF_VERSION        := 0.17.2
-PYTHON_SOURCES      := ingestion streaming tests/catalog tools
+PYTHON_SOURCES      := ingestion streaming infra/secrets tests/catalog tools
 
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	cluster-restart cluster-dns-check \
 	secrets argocd-up argocd-apps airflow-image smoke-test rest-catalog-test screenshots ingestion-test \
 	transform-lock dbt lint dbt-parse ingestion-lock ingestion-lock-check \
-	streaming-lock streaming-test producer-image producer-image-import
+	streaming-lock streaming-test streaming-image streaming-image-import
 
 VENV                := .venv
 # Browsers downloaded by Playwright stay inside the project virtual environment.
@@ -235,14 +235,14 @@ $(STREAMING_VENV)/bin/pytest: $(STREAMING_DIR)/requirements-test.txt
 streaming-test: $(STREAMING_VENV)/bin/pytest
 	cd $(STREAMING_DIR) && .venv/bin/pytest
 
-## Build the real-time producer image. Context: the repository root.
+## Build the real-time image (producer and writer). Context: the repository root.
 ## The CI runs it with the ghcr.io name and the commit SHA as tag.
-producer-image:
-	docker build --file $(STREAMING_DIR)/Dockerfile --tag $(PRODUCER_IMAGE) .
+streaming-image:
+	docker build --file $(STREAMING_DIR)/Dockerfile --tag $(STREAMING_IMAGE) .
 
-## Load the local producer image into the k3d nodes, to test it before the CI publishes it.
-producer-image-import: check-kubeconfig
-	k3d image import $(PRODUCER_IMAGE) --cluster $(CLUSTER_NAME)
+## Load the local real-time image into the k3d nodes, to test it before the CI publishes it.
+streaming-image-import: check-kubeconfig
+	k3d image import $(STREAMING_IMAGE) --cluster $(CLUSTER_NAME)
 
 ## Pin every dbt dependency, transitive ones included, from transform/requirements.in.
 ## Releases newer than 14 days are ignored, so that every pin is at least two weeks old.

@@ -88,8 +88,8 @@ jobs:
           docker tag "$IMAGE_REPO:$GITHUB_SHA" "$IMAGE_REPO:main"
           docker push "$IMAGE_REPO:main"
 
-  producer-image:
-    name: Producer image
+  streaming-image:
+    name: Streaming image
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -98,12 +98,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Image name
         # Container image names must be lowercase; the owner name is not.
-        run: echo "IMAGE_REPO=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wattlake-producer" >> "$GITHUB_ENV"
+        run: echo "IMAGE_REPO=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wattlake-streaming" >> "$GITHUB_ENV"
       - name: Build
-        run: make producer-image PRODUCER_IMAGE_REPO="$IMAGE_REPO" PRODUCER_IMAGE_TAG="$GITHUB_SHA"
+        run: make streaming-image STREAMING_IMAGE_REPO="$IMAGE_REPO" STREAMING_IMAGE_TAG="$GITHUB_SHA"
       - name: Check that the image starts
         # Imports every module and their dependencies (librdkafka included) in the built image.
-        run: docker run --rm "$IMAGE_REPO:$GITHUB_SHA" python -c "import wattlake_streaming.producer, wattlake_streaming.health"
+        run: docker run --rm "$IMAGE_REPO:$GITHUB_SHA" python -c "import wattlake_streaming.producer, wattlake_streaming.writer, wattlake_streaming.health"
       - name: Publish to ghcr.io (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:

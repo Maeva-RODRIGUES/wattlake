@@ -1,5 +1,5 @@
-# Real-time producer image: Python, the pinned dependencies and the
-# wattlake_streaming package. Built by "make producer-image" from the repository
+# Real-time image: Python, the pinned dependencies and the wattlake_streaming
+# package (producer and writer). Built by "make streaming-image" from the repository
 # root (build context "."), published by the CI to ghcr.io.
 # Files sent to the build: see Dockerfile.dockerignore next to this file.
 

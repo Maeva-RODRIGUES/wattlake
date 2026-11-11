@@ -1,6 +1,6 @@
 # infra
 
-Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), producteur temps réel (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
+Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), flux temps réel, producteur et writer (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
 
 ## GitOps avec Argo CD
 
@@ -34,10 +34,13 @@ Le chart Airflow demande, avec Argo CD, `useHelmHooks: false` et `applyCustomEnv
 
 ## Secrets
 
-Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée six Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials`, `airflow-credentials` et `nessie-db-credentials`. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
+Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée sept Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials`, `airflow-credentials`, `nessie-db-credentials` et `streaming-credentials`. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
 
-- **Une identité S3 par composant** : Nessie, Trino et Airflow ont chacun leurs clés, limitées à la lecture, l'écriture et la liste du bucket `warehouse`. L'identité `admin`, utilisée par aucun composant, sert à l'exploitation.
-- **Par groupes, en tout ou rien** : des Secrets qui partagent des valeurs forment un groupe (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Un groupe est créé en entier ou pas du tout : le script ne remplace jamais un Secret existant, et s'arrête si seuls certains Secrets d'un groupe existent. Deux groupes : `stack` (les cinq premiers Secrets) et `nessie-db` (le rôle PostgreSQL de Nessie, voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)). Un groupe ajouté plus tard se crée sur un cluster existant sans toucher aux autres.
+- **Une identité S3 par composant** : Nessie, Trino, Airflow et le writer temps réel (`streaming`) ont chacun leurs clés, limitées à la lecture, l'écriture et la liste du bucket `warehouse`. L'identité `admin`, utilisée par aucun composant, sert à l'exploitation.
+- **Par groupes, en tout ou rien** : des Secrets qui partagent des valeurs forment un groupe (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Un groupe est créé en entier ou pas du tout : le script ne remplace jamais un Secret existant, et s'arrête si seuls certains Secrets d'un groupe existent. Un groupe ajouté plus tard se crée sur un cluster existant sans toucher aux autres. Trois groupes :
+  - `stack` : les cinq premiers Secrets ;
+  - `nessie-db` : le rôle PostgreSQL de Nessie (voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)) ;
+  - `streaming` : les clés du writer temps réel (ADR 010). Le script les ajoute aussi comme identité dans `seaweedfs-s3-config`, par [secrets/add_s3_identity.py](secrets/add_s3_identity.py), sans toucher aux autres identités. Sur un cluster existant, il faut ensuite redémarrer le filer de SeaweedFS, qui ne lit ses identités qu'au démarrage : le script affiche la commande.
 - **Hors d'Argo CD** : les Secrets ne sont pas suivis par Argo CD, et portent des noms qu'aucun chart ne génère. Argo CD ne peut donc pas les supprimer.
 
 Lors du passage à ces Secrets, Argo CD a supprimé (`prune`) les Secrets que les charts ne généraient plus, sauf deux : `airflow-fernet-key` et `seaweedfs-s3-secret`. Les charts les déclarent comme hooks Helm (annotation `helm.sh/hook`), et Argo CD traite un hook à part : il ne le supprime jamais par `prune`. Ils ont été supprimés à la main. Ce piège vaut pour toute ressource déclarée en hook par un chart.
@@ -93,19 +96,24 @@ Deux réglages d'Argo CD sont propres à Strimzi :
 - l'Application `strimzi` utilise `ServerSideApply=true` : la CRD `Kafka` fait environ 350 Ko, au-delà des 256 Ko de l'annotation `last-applied-configuration` qu'utilise l'application côté client ;
 - l'Application `kafka` utilise `SkipDryRunOnMissingResource=true` et des nouvelles tentatives : au premier déploiement, ses ressources peuvent être synchronisées avant que l'opérateur ait installé leurs CRD.
 
-## Producteur temps réel
+## Flux temps réel
 
-[streaming/](streaming/) déploie le producteur ([../streaming/README.md](../streaming/README.md), ADR 009) : un `Deployment` à un réplica, en stratégie `Recreate` pour ne jamais faire tourner deux producteurs à la fois. L'Application Argo CD `streaming` le synchronise depuis la branche `main`.
+[streaming/](streaming/) déploie les deux composants du flux ([../streaming/README.md](../streaming/README.md)), synchronisés par l'Application Argo CD `streaming` depuis la branche `main` :
 
-- **Sécurité** : utilisateur non root (10001), système de fichiers en lecture seule, toutes les capacités Linux retirées. Seul `/tmp` est accessible en écriture (un `emptyDir`), pour le fichier de heartbeat.
-- **Sonde de vie** : le producteur n'expose aucun port. Il touche un fichier à chaque cycle, et la sonde (`python -m wattlake_streaming.health`) échoue si ce fichier a plus de 15 minutes, soit trois cycles. Une panne de l'API ne la déclenche pas : le fichier est touché même quand le cycle est sauté.
-- **Ressources** : 256 Mi au plus. Le premier démarrage, qui publie tout le jeu (environ 6 900 lignes), monte à environ 85 Mi.
-- **Image** : `ghcr.io/maeva-rodrigues/wattlake-producer`, publiée par la CI, avec le SHA du commit comme tag, fixé dans [streaming/kustomization.yaml](streaming/kustomization.yaml). Comme pour Airflow, déployer une nouvelle version, c'est changer ce tag dans un commit à part.
+- [producer.yaml](streaming/producer.yaml) : le producteur, de l'API vers Kafka (ADR 009) ;
+- [writer.yaml](streaming/writer.yaml) : le writer, de Kafka vers la table Iceberg `bronze.eco2mix_national_realtime` (ADR 010). Il n'est pas encore listé dans la kustomization : il le sera avec l'image qui le contient, publiée par la CI.
+
+Les deux tournent dans la même image, chacun dans un `Deployment` à un réplica, en stratégie `Recreate` : deux producteurs publieraient chaque ligne deux fois, deux writers l'écriraient deux fois.
+
+- **Sécurité** : utilisateur non root (10001), système de fichiers en lecture seule, toutes les capacités Linux retirées. Seul `/tmp` est accessible en écriture (un `emptyDir`), pour le fichier de heartbeat. Le writer a sa propre identité S3, `streaming` (voir « Secrets »).
+- **Sonde de vie** : aucun des deux n'expose de port. Chacun touche un fichier à chaque cycle de 5 minutes, et la sonde (`python -m wattlake_streaming.health`) échoue si ce fichier a plus de 15 minutes. Une panne de l'API ne la déclenche pas : le fichier est touché même quand le cycle est sauté.
+- **Ressources** : 256 Mi au plus pour le producteur, dont le premier démarrage monte à environ 85 Mi ; 512 Mi pour le writer, qui charge PyArrow et écrit tout le topic au premier lot.
+- **Image** : `ghcr.io/maeva-rodrigues/wattlake-streaming`, publiée par la CI, avec le SHA du commit comme tag, fixé dans [streaming/kustomization.yaml](streaming/kustomization.yaml). Le producteur tourne encore sur l'image `wattlake-producer`, son ancien nom. Comme pour Airflow, déployer une nouvelle version, c'est changer ce tag dans un commit à part.
 
 Pour essayer une modification avant de la commiter, on peut construire l'image en local, la charger dans k3d, puis l'appliquer à la main avec le tag `local`. Argo CD remet l'image de `main` à la synchronisation suivante, à cause de `selfHeal` : il faut donc suspendre la synchronisation automatique de l'Application `streaming` le temps de l'essai.
 
 ```bash
-make producer-image producer-image-import
+make streaming-image streaming-image-import
 ```
 
 ## Dépannage

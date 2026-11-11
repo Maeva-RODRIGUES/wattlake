@@ -1,0 +1,91 @@
+# Writer (streaming/): reads the eco2mix-realtime topic and appends its messages
+# to the Iceberg table bronze.eco2mix_national_realtime (docs/adr/010-ecriture-flux-iceberg.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: writer
+  labels:
+    app.kubernetes.io/name: writer
+spec:
+  # One writer: two would read the same partitions and append every row twice.
+  replicas: 1
+  strategy:
+    # Stop the old pod before starting the new one, for the same reason. The
+    # writer resumes from the offsets stored in the table.
+    type: Recreate
+  # Immutable once created (part-of is added by kustomization.yaml).
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: writer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: writer
+    spec:
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # Lets the current batch be written after SIGTERM.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: writer
+          # Same image as the producer (name and tag set by kustomization.yaml).
+          image: wattlake-streaming
+          command: ["python", "-m", "wattlake_streaming.writer"]
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: wattlake-kafka-bootstrap:9092
+            - name: KAFKA_TOPIC
+              value: eco2mix-realtime
+            - name: HEARTBEAT_FILE
+              value: /tmp/heartbeat
+            # PyIceberg catalog "wattlake": Nessie's Iceberg REST catalog, with
+            # the writer's own S3 keys (ADR 004). PyIceberg maps
+            # PYICEBERG_CATALOG__WATTLAKE__S3__ACCESS_KEY_ID to s3.access-key-id.
+            - name: PYICEBERG_CATALOG__WATTLAKE__TYPE
+              value: rest
+            - name: PYICEBERG_CATALOG__WATTLAKE__URI
+              value: http://nessie:19120/iceberg
+            # Keys of the "streaming" SeaweedFS identity, from a Secret created
+            # by "make secrets", outside Git (docs/adr/006-gestion-des-secrets.md).
+            - name: PYICEBERG_CATALOG__WATTLAKE__S3__ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: streaming-credentials
+                  key: s3-access-key-id
+            - name: PYICEBERG_CATALOG__WATTLAKE__S3__SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: streaming-credentials
+                  key: s3-secret-access-key
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # No port to probe: the writer touches its heartbeat file after every
+          # batch (5 minutes), the probe fails once it is 15 minutes old.
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "wattlake_streaming.health"]
+            periodSeconds: 60
+            timeoutSeconds: 10
+          volumeMounts:
+            # The only writable path (heartbeat file), the root filesystem being read-only.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            # The first run writes the whole topic (about 7,000 rows) in one batch.
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

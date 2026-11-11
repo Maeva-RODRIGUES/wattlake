@@ -1,19 +1,17 @@
-# Real-time producer (streaming/README.md).
+# Real-time pipeline (streaming/README.md): the producer, and soon the writer.
 # Deployed by Argo CD (infra/argocd/apps/streaming.yaml), from the main branch.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: wattlake
 labels:
   - pairs:
-      app.kubernetes.io/name: producer
       app.kubernetes.io/part-of: wattlake
     includeSelectors: true
 resources:
-  - deployment.yaml
+  - producer.yaml
 images:
-  # Image built and published by the CI (job "Producer image"); the tag is the
-  # SHA of the commit it was built from. To deploy a new version, change the
-  # tag in a commit of its own.
-  - name: wattlake-producer
+  # Image built and published by the CI; the tag is the SHA of the commit it
+  # was built from. To deploy a new version, change it in a commit of its own.
+  - name: wattlake-streaming
     newName: ghcr.io/maeva-rodrigues/wattlake-producer
     newTag: 1bf5ae9dfa3af4e60bb5d83057d720be03a4784f
