@@ -1,0 +1,8 @@
+# Build context of streaming/Dockerfile is the repository root: send only what
+# the Dockerfile copies. BuildKit reads this file because it sits next to the
+# Dockerfile and is named after it.
+*
+!streaming/requirements.txt
+!streaming/src
+**/__pycache__
+**/*.py[cod]

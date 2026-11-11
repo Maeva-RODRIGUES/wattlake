@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wattlake-streaming"
+version = "0.1.0"
+description = "Producer publishing the RTE eCO2mix real-time data to Kafka"
+license = "Apache-2.0"
+# Same Python as the python:3.13.17-slim image the producer runs in.
+requires-python = ">=3.13"
+# Direct dependencies only; every package, transitive ones included, is pinned
+# with its hashes in requirements.txt (make streaming-lock).
+dependencies = [
+    # Python client built on librdkafka, the reference C client.
+    "confluent-kafka==2.16.1",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest==9.1.1",
+    "respx==0.23.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wattlake_streaming"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+pythonpath = ["src"]

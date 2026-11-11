@@ -11,4 +11,4 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "SIM", "LOG"]
 
 [lint.isort]
-known-first-party = ["wattlake_ingestion"]
+known-first-party = ["wattlake_ingestion", "wattlake_streaming"]

@@ -5,3 +5,4 @@ namespace: wattlake
 resources:
   - kafka.yaml
   - nodepool.yaml
+  - topics.yaml

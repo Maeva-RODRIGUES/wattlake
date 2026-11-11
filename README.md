@@ -36,10 +36,12 @@ flowchart LR
     NES --- SG
     S3[SeaweedFS<br/>stockage S3] --- BR
     S3 --- SG
-    API -.->|temps réel, étape 5| K[Kafka]
+    API -->|temps réel,<br/>toutes les 5 min| PR[Producteur]
+    PR -->|JSON, clé = quart d'heure| K[Kafka<br/>topic compacté]
+    K -.->|étape 5.3| BR
 ```
 
-Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Helm et, à terme, synchronisée depuis ce dépôt par Argo CD. Les tables sont au format Iceberg. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt, qui reconstruit silver et gold sur Trino et lance les tests. Kafka est déployé ; le flux temps réel, en pointillés, arrive avec le producteur et l'écriture dans Iceberg.
+Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Helm et, à terme, synchronisée depuis ce dépôt par Argo CD. Les tables sont au format Iceberg. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt, qui reconstruit silver et gold sur Trino et lance les tests. En parallèle, un producteur publie les mesures temps réel dans Kafka ; leur écriture dans Iceberg, en pointillés, arrive à l'étape suivante.
 
 | Brique | Outil | Rôle |
 | --- | --- | --- |
@@ -50,8 +52,8 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | Ingestion | Python, PyIceberg | Télécharge les exports de l'API et les écrit dans bronze, un commit par mois |
 | Transformations | dbt (adaptateur Trino) | Construit les couches silver et gold, avec des tests |
 | Orchestration | Airflow | Planifie l'ingestion batch et lance dbt chaque fois que bronze change |
-| Streaming | Kafka (KRaft), opérateur Strimzi | Déployé ; transportera les mises à jour en temps réel (producteur et écriture dans Iceberg à venir) |
-| Intégration continue | GitHub Actions, Dependabot (ADR 005) | Vérifie le code à chaque modification et publie l'image Airflow |
+| Streaming | Kafka (KRaft), opérateur Strimzi ; producteur Python (confluent-kafka) | Le producteur publie les mesures temps réel dans Kafka (ADR 009) ; écriture dans Iceberg à venir |
+| Intégration continue | GitHub Actions, Dependabot (ADR 005) | Vérifie le code à chaque modification et publie les images Airflow et du producteur |
 | Déploiement | Kubernetes, Helm, Argo CD | Déploie la stack en GitOps : le cluster suit la branche `main` |
 
 ## Feuille de route
@@ -84,12 +86,12 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 
 | Outil | Version testée | Rôle |
 | --- | --- | --- |
-| Docker | 28.1 | Fait tourner les nœuds du cluster k3d et construit l'image Airflow |
+| Docker | 28.1 | Fait tourner les nœuds du cluster k3d et construit les images Airflow et du producteur |
 | k3d | 5.9 (k3s 1.35.5) | Crée le cluster Kubernetes local |
 | kubectl | 1.35 | Pilote le cluster |
 | Helm | 3.12 | Déploie les composants de la stack |
 | Python | 3.12 | Utilisé par le smoke test |
-| uv | 0.11 | Crée les environnements Python 3.13 du code d'ingestion et du projet dbt |
+| uv | 0.11 | Crée les environnements Python 3.13 du code d'ingestion, du producteur et du projet dbt |
 | direnv | 2.32 | Charge les variables d'environnement du projet (optionnel) |
 
 Prévoir 16 Go de mémoire libre : les limites mémoire des composants atteignent environ 13 Go, dont 5 Go pour Trino et 5,5 Go pour Airflow, et les Jobs d'installation d'Airflow ajoutent temporairement 2 Go.
@@ -186,16 +188,18 @@ Au premier lancement, la cible crée un environnement virtuel `.venv` dans le pr
 
 ### Intégration continue
 
-Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) tourne sur chaque pull request et chaque push sur `main`. Ses quatre jobs appellent les mêmes cibles qu'en local :
+Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) tourne sur chaque pull request et chaque push sur `main`. Ses six jobs appellent les mêmes cibles qu'en local :
 
 ```bash
 make lint             # ruff : style et erreurs du code Python (configuration : ruff.toml)
 make ingestion-test   # tests unitaires de l'ingestion, sans réseau
+make streaming-test   # tests unitaires du producteur temps réel, sans réseau
 make dbt-parse        # validation du projet dbt, sans base de données
 make airflow-image    # construction de l'image Airflow
+make producer-image   # construction de l'image du producteur
 ```
 
-Sur `main`, l'image est publiée sur `ghcr.io/maeva-rodrigues/wattlake-airflow`, avec le SHA du commit comme tag. Les actions tierces sont épinglées par SHA, et les permissions réduites au minimum.
+Sur `main`, les images sont publiées sur `ghcr.io/maeva-rodrigues/wattlake-airflow` et `ghcr.io/maeva-rodrigues/wattlake-producer`, avec le SHA du commit comme tag. Les actions tierces sont épinglées par SHA, et les permissions réduites au minimum.
 
 `dbt build` et les tests unitaires dbt ne tournent pas en CI : ils demandent Trino et la table bronze. Ils tournent dans le cluster, avec `make dbt ARGS="build"` ou le DAG `dbt_transformations`.
 
@@ -208,7 +212,8 @@ Le reste se met à jour à la main, en vérifiant que chaque version a au moins 
 - **Airflow et les paquets épinglés sur ses contraintes** (`httpx`, `pyarrow`, `s3fs`, `sqlalchemy`), que Dependabot ignore : une autre version de ces paquets est impossible à installer avec les contraintes d'Airflow 3.2.2, et la CI le refuse. Monter de version Airflow change ensemble l'image de base et `apache-airflow==` dans [`ingestion/Dockerfile`](ingestion/Dockerfile), l'URL des contraintes (Dockerfile, Makefile et [`tests/catalog/run.sh`](tests/catalog/run.sh)), `airflowVersion` dans [`infra/airflow/values.yaml`](infra/airflow/values.yaml), le chart, puis ces paquets ;
 - les charts Helm et la version de Python, dans le [`Makefile`](Makefile) ;
 - les tags d'images dans les fichiers de valeurs de [`infra/`](infra/) ;
-- les dépendances de dbt : modifier [`transform/requirements.in`](transform/requirements.in), puis `make transform-lock`, qui régénère `requirements.txt` en ignorant les versions de moins de 14 jours.
+- les dépendances de dbt : modifier [`transform/requirements.in`](transform/requirements.in), puis `make transform-lock`, qui régénère `requirements.txt` en ignorant les versions de moins de 14 jours ;
+- les dépendances du producteur : modifier [`streaming/pyproject.toml`](streaming/pyproject.toml), puis `make streaming-lock`, qui régénère `requirements.txt` et `requirements-test.txt`, empreintes comprises, avec la même règle. Dependabot ne suit que l'image de base du producteur.
 
 ### Mettre en pause et supprimer
 
@@ -232,6 +237,8 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 005 : plateforme d'intégration continue](docs/adr/005-integration-continue.md), ou pourquoi GitHub Actions plutôt que GitLab CI, dont la CI pour un dépôt GitHub est réservée aux offres payantes.
 - [ADR 006 : gestion des secrets](docs/adr/006-gestion-des-secrets.md), ou pourquoi des Secrets générés hors du dépôt plutôt que Sealed Secrets, SOPS ou External Secrets, sur un cluster local recréé à volonté.
 - [ADR 007 : stockage des versions de Nessie](docs/adr/007-stockage-versions-nessie.md), ou pourquoi JDBC2 sur l'instance PostgreSQL existante plutôt que RocksDB ou une instance dédiée.
+- [ADR 008 : Write-Audit-Publish avec les branches Nessie](docs/adr/008-write-audit-publish.md), ou comment dbt écrit sur une branche `audit`, teste, puis fusionne dans `main` en un seul commit.
+- [ADR 009 : producteur temps réel vers Kafka](docs/adr/009-producteur-temps-reel.md), ou pourquoi un `Deployment` dédié plutôt qu'une tâche Airflow, du JSON plutôt qu'Avro, et un curseur lu dans Kafka avec un topic compacté.
 
 ## Ce que je ferais en production
 

@@ -3,8 +3,9 @@
 # at least two weeks old. It does not delay security updates.
 # Not covered here, reviewed by hand (README.md, "Mettre à jour les versions"):
 # the Helm charts and Python version in the Makefile, the image tags in the
-# Helm values, transform/requirements.txt (compiled by uv pip compile), and
-# Airflow itself with the packages pinned to its constraints (see below).
+# Helm values, transform/requirements.txt and streaming/requirements*.txt
+# (compiled with hashes by uv pip compile), and Airflow itself with the packages
+# pinned to its constraints (see below).
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -43,3 +44,11 @@ updates:
       - dependency-name: pyarrow
       - dependency-name: s3fs
       - dependency-name: sqlalchemy
+
+  # Base image of the real-time producer (python:3.13.x-slim, pinned by digest).
+  - package-ecosystem: docker
+    directory: /streaming
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14

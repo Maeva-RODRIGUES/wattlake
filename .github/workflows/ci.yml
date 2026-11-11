@@ -44,6 +44,16 @@ jobs:
       # Every installed package must be pinned (Airflow constraints or ingestion/constraints.txt).
       - run: make ingestion-lock-check
 
+  streaming-tests:
+    name: Producer unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: ${{ env.UV_VERSION }}
+      - run: make streaming-test
+
   dbt-parse:
     name: dbt parse
     runs-on: ubuntu-24.04
@@ -72,6 +82,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # docker login with the workflow token: no third-party action needed.
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE_REPO:$GITHUB_SHA"
+          docker tag "$IMAGE_REPO:$GITHUB_SHA" "$IMAGE_REPO:main"
+          docker push "$IMAGE_REPO:main"
+
+  producer-image:
+    name: Producer image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Image name
+        # Container image names must be lowercase; the owner name is not.
+        run: echo "IMAGE_REPO=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wattlake-producer" >> "$GITHUB_ENV"
+      - name: Build
+        run: make producer-image PRODUCER_IMAGE_REPO="$IMAGE_REPO" PRODUCER_IMAGE_TAG="$GITHUB_SHA"
+      - name: Check that the image starts
+        # Imports every module and their dependencies (librdkafka included) in the built image.
+        run: docker run --rm "$IMAGE_REPO:$GITHUB_SHA" python -c "import wattlake_streaming.producer, wattlake_streaming.health"
+      - name: Publish to ghcr.io (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker push "$IMAGE_REPO:$GITHUB_SHA"

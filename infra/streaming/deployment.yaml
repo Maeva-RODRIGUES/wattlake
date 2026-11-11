@@ -1,0 +1,62 @@
+# Real-time producer (streaming/): polls the eCO2mix real-time dataset and
+# publishes its rows to the eco2mix-realtime topic (infra/kafka/topics.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: producer
+spec:
+  # Exactly one producer: two would publish every row twice.
+  replicas: 1
+  strategy:
+    # Stop the old pod before starting the new one, for the same reason. The
+    # producer resumes from the topic, so the short gap loses nothing.
+    type: Recreate
+  template:
+    spec:
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # Lets the current cycle finish and flush its messages after SIGTERM.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: producer
+          # Name and tag set by kustomization.yaml.
+          image: wattlake-producer
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: wattlake-kafka-bootstrap:9092
+            - name: KAFKA_TOPIC
+              value: eco2mix-realtime
+            - name: HEARTBEAT_FILE
+              value: /tmp/heartbeat
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # No port to probe: the producer touches its heartbeat file on every
+          # cycle (5 minutes), the probe fails once it is 15 minutes old.
+          livenessProbe:
+            exec:
+              command: ["python", "-m", "wattlake_streaming.health"]
+            periodSeconds: 60
+            timeoutSeconds: 10
+          volumeMounts:
+            # The only writable path (heartbeat file), the root filesystem being read-only.
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            # The first run holds the whole dataset in memory (about 7,000 rows).
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Mi
