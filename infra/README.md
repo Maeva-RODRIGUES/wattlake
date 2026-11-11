@@ -99,11 +99,21 @@ Deux réglages d'Argo CD sont propres à Strimzi :
 
 **Symptômes** : après un redémarrage de l'ordinateur ou un changement de réseau (Wi-Fi, partage de connexion), les Applications Argo CD passent en `Unknown` avec `ComparisonError: ... failed to get git client for repo`, et les logs de `argocd-repo-server` montrent `lookup github.com on 10.43.0.10:53: server misbehaving`. Les noms internes au cluster (`nessie`, `trino`...) résolvent toujours : seuls les noms externes échouent, dont l'API ODRÉ du DAG bronze.
 
-**Cause** : CoreDNS transmet les noms externes au résolveur du nœud k3d, qui est le DNS intégré de Docker (`192.168.64.1`). Docker y inscrit les serveurs DNS de l'ordinateur au démarrage du conteneur, lus dans `/run/systemd/resolve/resolv.conf`, et ne les met plus à jour ensuite. Après un changement de réseau, le cluster interroge encore les serveurs de l'ancien réseau, qui ne répondent plus.
+**Cause** : CoreDNS transmet les noms externes au résolveur du nœud k3d sur lequel il tourne, qui est le DNS intégré de Docker (`192.168.64.1`). Docker y inscrit les serveurs DNS de l'ordinateur au démarrage du conteneur, lus dans `/run/systemd/resolve/resolv.conf`, et ne les met plus à jour ensuite. Deux cas en découlent :
 
-**Vérifier** : `make cluster-dns-check`, en lecture seule. La cible compare les serveurs DNS de l'ordinateur à ceux utilisés par les nœuds (commentaire `ExtServers` de leur `/etc/resolv.conf`), puis résout `github.com` et `odre.opendatasoft.com` par CoreDNS. Elle échoue si un nom ne résout pas.
+- après un changement de réseau, le nœud interroge encore les serveurs de l'ancien réseau, qui ne répondent plus ;
+- un nœud démarré pendant que l'ordinateur changeait de réseau n'a reçu aucun serveur : son `/etc/resolv.conf` contient `# NO EXTERNAL NAMESERVERS DEFINED`.
 
-**Corriger** : `make cluster-restart`, environ 2 à 3 minutes. Au démarrage des conteneurs, Docker relit les serveurs DNS de l'ordinateur. Aucune donnée n'est perdue : volumes conservés, catalogue Nessie dans PostgreSQL. Argo CD resynchronise ensuite tout seul.
+Chaque nœud démarre séparément : l'un peut être sain et l'autre non. Si le nœud défaillant est celui de CoreDNS, tout le cluster perd les noms externes.
+
+**Vérifier** : `make cluster-dns-check`, en lecture seule. Pour chaque nœud (`server-0`, `agent-0`), la cible lit les serveurs DNS reçus de Docker (commentaire `ExtServers` de son `/etc/resolv.conf`) et les compare à ceux de l'ordinateur. Elle résout ensuite `github.com` et `odre.opendatasoft.com` par le résolveur du nœud, puis par CoreDNS. Elle échoue si un nœud n'a aucun serveur ou si un nom ne résout pas, et elle affiche les nœuds à redémarrer.
+
+**Corriger** : d'abord, attendre que le réseau de l'ordinateur soit stable : `/run/systemd/resolve/resolv.conf` doit lister au moins un `nameserver`. Sinon, les nœuds redémarrés n'auront aucun serveur DNS.
+
+- Un seul nœud en échec : `docker restart k3d-wattlake-agent-0` (le nom affiché par la cible), environ 1 minute. Seuls les pods de ce nœud redémarrent.
+- Plusieurs nœuds, ou en cas de doute : `make cluster-restart`, environ 2 à 3 minutes.
+
+Au démarrage des conteneurs, Docker relit les serveurs DNS de l'ordinateur. Aucune donnée n'est perdue : volumes conservés, catalogue Nessie dans PostgreSQL. Argo CD resynchronise ensuite tout seul.
 
 Deux corrections permanentes ont été écartées :
 
