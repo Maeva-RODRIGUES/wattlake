@@ -1,13 +1,13 @@
 # infra
 
-Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
+Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi), ressources du cluster Kafka (`kafka/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
 
 ## GitOps avec Argo CD
 
 Argo CD est le seul composant installé à la main (`make argocd-up`, chart `argo/argo-cd` 10.11.1, valeurs dans [argocd/values.yaml](argocd/values.yaml)). Il déploie tous les autres depuis la branche `main` du dépôt GitHub :
 
 - [argocd/root.yaml](argocd/root.yaml) : l'Application racine (« app of apps »), appliquée par `make argocd-apps`. Elle déploie les Applications de [argocd/apps/](argocd/apps/).
-- Une Application par composant : SeaweedFS, Nessie, Trino et Airflow combinent leur chart, à la version épinglée, et le fichier de valeurs de ce dossier. PostgreSQL déploie le dossier kustomize [postgres/](postgres/).
+- Une Application par composant : SeaweedFS, Nessie, Trino, Airflow et l'opérateur Strimzi combinent leur chart, à la version épinglée, et le fichier de valeurs de ce dossier. PostgreSQL et Kafka déploient les dossiers kustomize [postgres/](postgres/) et [kafka/](kafka/).
 
 Le cluster suit donc ce qui est sur `main` : un changement de valeurs ou de version passe par un commit, pas par une commande `helm`.
 
@@ -78,6 +78,20 @@ Une seule instance, avec une base par composant, chacune propriété de son rôl
 - `nessie` : le version store de Nessie, en JDBC2 (voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)). Nessie crée ses tables (`refs2`, `objs2`) au premier démarrage.
 
 Chaque base n'accepte que les connexions de son propriétaire (`REVOKE CONNECT ... FROM PUBLIC`) : le rôle `nessie` ne peut pas se connecter à la base `airflow`, ni l'inverse. Les rôles et les bases sont créés par les scripts de [postgres/initdb.yaml](postgres/initdb.yaml), qui ne s'exécutent que sur un volume vide.
+
+## Kafka
+
+Kafka est géré par l'opérateur **Strimzi** : on décrit le cluster dans des ressources Kubernetes (`Kafka`, `KafkaNodePool`, plus tard `KafkaTopic`), et l'opérateur crée et maintient les pods, les volumes, les Services et la configuration.
+
+- **Opérateur** : chart `strimzi-kafka-operator` 1.3.0 (12 octobre 2026 ; la 1.3.1 avait moins de deux semaines), dans le namespace `strimzi`, valeurs dans [strimzi/values.yaml](strimzi/values.yaml). Il ne surveille que le namespace `wattlake` : ses droits y sont limités par des RoleBindings, et ses seuls droits à l'échelle du cluster portent sur les nœuds, les classes de stockage et les ClusterRoleBindings.
+- **Cluster** : [kafka/](kafka/), Kafka 4.3.1 en mode **KRaft**, sans ZooKeeper. Un seul nœud porte les rôles de contrôleur et de broker, avec un facteur de réplication de 1 et un volume persistant de 5 Gi (`local-path`) : les messages survivent à un redémarrage du pod ou du cluster.
+- **Accès** : `wattlake-kafka-bootstrap.wattlake.svc:9092`, listener interne sans TLS ni authentification, comme Trino et Nessie en local. En production, il faudrait un listener TLS et une authentification (SCRAM ou mTLS), avec le User Operator de Strimzi pour gérer les comptes.
+- **Topics** : créés seulement par des ressources `KafkaTopic` versionnées, via le Topic Operator (`auto.create.topics.enable: false`). Une faute de frappe dans un producteur ne crée pas de topic.
+
+Deux réglages d'Argo CD sont propres à Strimzi :
+
+- l'Application `strimzi` utilise `ServerSideApply=true` : la CRD `Kafka` fait environ 350 Ko, au-delà des 256 Ko de l'annotation `last-applied-configuration` qu'utilise l'application côté client ;
+- l'Application `kafka` utilise `SkipDryRunOnMissingResource=true` et des nouvelles tentatives : au premier déploiement, ses ressources peuvent être synchronisées avant que l'opérateur ait installé leurs CRD.
 
 ## Dépannage
 

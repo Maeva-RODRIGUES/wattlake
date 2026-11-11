@@ -39,7 +39,7 @@ flowchart LR
     API -.->|temps réel, étape 5| K[Kafka]
 ```
 
-Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Helm et, à terme, synchronisée depuis ce dépôt par Argo CD. Les tables sont au format Iceberg. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt, qui reconstruit silver et gold sur Trino et lance les tests. Kafka, en pointillés, est prévu pour le temps réel.
+Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Helm et, à terme, synchronisée depuis ce dépôt par Argo CD. Les tables sont au format Iceberg. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt, qui reconstruit silver et gold sur Trino et lance les tests. Kafka est déployé ; le flux temps réel, en pointillés, arrive avec le producteur et l'écriture dans Iceberg.
 
 | Brique | Outil | Rôle |
 | --- | --- | --- |
@@ -50,7 +50,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | Ingestion | Python, PyIceberg | Télécharge les exports de l'API et les écrit dans bronze, un commit par mois |
 | Transformations | dbt (adaptateur Trino) | Construit les couches silver et gold, avec des tests |
 | Orchestration | Airflow | Planifie l'ingestion batch et lance dbt chaque fois que bronze change |
-| Streaming | Kafka (à venir) | Transportera les mises à jour en temps réel |
+| Streaming | Kafka (KRaft), opérateur Strimzi | Déployé ; transportera les mises à jour en temps réel (producteur et écriture dans Iceberg à venir) |
 | Intégration continue | GitHub Actions, Dependabot (ADR 005) | Vérifie le code à chaque modification et publie l'image Airflow |
 | Déploiement | Kubernetes, Helm, Argo CD | Déploie la stack en GitOps : le cluster suit la branche `main` |
 

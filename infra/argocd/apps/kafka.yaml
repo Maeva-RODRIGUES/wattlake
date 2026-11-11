@@ -1,0 +1,34 @@
+# Argo CD Application for the Kafka cluster (Kafka and KafkaNodePool resources,
+# reconciled by the Strimzi operator). Synced automatically from the main branch.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kafka
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wattlake
+  # Kustomize directory: the manifests of infra/kafka.
+  source:
+    repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+    targetRevision: main
+    path: infra/kafka
+  # Automated sync: the cluster follows the main branch. prune deletes what is
+  # removed from Git, selfHeal reverts changes made by hand in the cluster.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # On the first deployment, these resources can be synced before the
+      # strimzi Application has installed their CRDs: skip the dry run instead
+      # of failing, and retry until the CRDs exist.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

@@ -1,0 +1,41 @@
+# Kafka cluster of the local WattLake stack, managed by the Strimzi operator
+# (infra/strimzi/). KRaft mode: no ZooKeeper, the controller role runs in the
+# same node as the broker (nodepool.yaml).
+# Clients connect to wattlake-kafka-bootstrap.wattlake.svc:9092.
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: wattlake
+spec:
+  kafka:
+    # Default Kafka version of Strimzi 1.3.0 (Kafka 4.3.1, released 2026-06-23).
+    version: 4.3.1
+    metadataVersion: 4.3-IV0
+    listeners:
+      # In-cluster plain listener, without TLS or authentication, like the
+      # other local services (Trino, Nessie). See infra/README.md, "Kafka".
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    # Single node: every internal topic and every new topic has one replica.
+    config:
+      offsets.topic.replication.factor: 1
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      default.replication.factor: 1
+      min.insync.replicas: 1
+      # Topics are declared in Git as KafkaTopic resources, managed by the
+      # Topic Operator: a typo in a producer must not create a new topic.
+      auto.create.topics.enable: false
+  # Topic Operator only: topics as KafkaTopic resources. No User Operator, as
+  # the listener has no authentication.
+  entityOperator:
+    topicOperator:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
