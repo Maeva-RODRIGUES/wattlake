@@ -99,4 +99,20 @@ Attention : ce test enregistre une exécution manuelle dont la date logique est 
 make ingestion-test
 ```
 
-La cible crée `ingestion/.venv` avec [uv](https://docs.astral.sh/uv/), en Python 3.13.13 et avec les contraintes d'Airflow 3.2.2, comme l'image Airflow, puis lance pytest. Les appels HTTP sont simulés avec respx, et les tests bronze utilisent un catalogue Iceberg local (SQLite et fichiers temporaires) : aucun test ne contacte l'API ni le cluster.
+La cible crée `ingestion/.venv` avec [uv](https://docs.astral.sh/uv/), en Python 3.13.13 et avec les mêmes contraintes que l'image Airflow, puis lance pytest. Les appels HTTP sont simulés avec respx, et les tests bronze utilisent un catalogue Iceberg local (SQLite et fichiers temporaires) : aucun test ne contacte l'API ni le cluster.
+
+## Versions des dépendances
+
+L'image et les tests installent le paquet avec deux fichiers de contraintes :
+
+- les contraintes d'Airflow 3.2.2, qui fixent la version de la plupart des dépendances ;
+- [constraints.txt](constraints.txt), qui fixe celles que les contraintes d'Airflow ne listent pas : les dépendances de PyIceberg (`strictyaml`, `pyroaring`), PyIceberg lui-même et les outils de test.
+
+Sans ce second fichier, ces paquets prendraient la dernière version publiée au moment de la construction : deux images du même commit pourraient différer.
+
+```bash
+make ingestion-lock         # régénère constraints.txt, en ignorant les versions de moins de 14 jours
+make ingestion-lock-check   # échoue si un paquet installé n'est fixé par aucun des deux fichiers (lancé en CI)
+```
+
+`constraints.txt` est généré par `uv pip compile` à partir de `pyproject.toml` et des contraintes d'Airflow, puis filtré par [tools/ingestion_constraints.py](../tools/ingestion_constraints.py) pour ne garder que les paquets absents des contraintes d'Airflow. Le contrôle compare les paquets installés aux deux fichiers, sans relancer la résolution : il échoue quand une nouvelle dépendance apparaît, pas quand une nouvelle version sort en amont. Après un changement de `pyproject.toml` ou une montée de version d'Airflow, relancer `make ingestion-lock` et relire le résultat.

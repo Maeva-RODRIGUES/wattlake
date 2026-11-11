@@ -41,6 +41,8 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
       - run: make ingestion-test
+      # Every installed package must be pinned (Airflow constraints or ingestion/constraints.txt).
+      - run: make ingestion-lock-check
 
   dbt-parse:
     name: dbt parse
