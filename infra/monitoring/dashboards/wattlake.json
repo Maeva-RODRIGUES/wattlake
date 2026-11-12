@@ -272,7 +272,7 @@
       },
       "targets": [
         {
-          "expr": "rate({__name__=~\"trino_execution_name_QueryManager_CompletedQueries(_total)?\"}[5m]) * 60",
+          "expr": "rate(trino_execution_name_QueryManager_CompletedQueries[5m]) * 60",
           "legendFormat": "terminées",
           "refId": "A",
           "datasource": {
@@ -281,7 +281,7 @@
           }
         },
         {
-          "expr": "rate({__name__=~\"trino_execution_name_QueryManager_FailedQueries(_total)?\"}[5m]) * 60",
+          "expr": "rate(trino_execution_name_QueryManager_FailedQueries[5m]) * 60",
           "legendFormat": "en échec",
           "refId": "B",
           "datasource": {
