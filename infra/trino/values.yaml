@@ -96,3 +96,14 @@ env:
       secretKeyRef:
         name: trino-credentials
         key: s3-secret-access-key
+
+# Prometheus scrapes the OpenMetrics endpoint every Trino node serves on its
+# HTTP port (/metrics), through a ServiceMonitor (docs/adr/011-supervision.md).
+# The cluster has no password authentication: the scrape only names a user
+# (HTTP basic, empty password), as Trino requires one on every request.
+serviceMonitor:
+  enabled: true
+  openMetrics:
+    enabled: true
+    username: prometheus
+    password: ""

@@ -1,6 +1,6 @@
 # infra
 
-Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), flux temps réel, producteur et writer (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
+Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi, supervision : `monitoring/`, `loki/`, `alloy/`), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), flux temps réel, producteur et writer (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
 
 ## GitOps avec Argo CD
 
@@ -34,13 +34,14 @@ Le chart Airflow demande, avec Argo CD, `useHelmHooks: false` et `applyCustomEnv
 
 ## Secrets
 
-Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée sept Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials`, `airflow-credentials`, `nessie-db-credentials` et `streaming-credentials`. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
+Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée huit Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials`, `airflow-credentials`, `nessie-db-credentials` et `streaming-credentials` dans le namespace `wattlake`, et `grafana-admin` dans le namespace `monitoring`. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
 
 - **Une identité S3 par composant** : Nessie, Trino, Airflow et le writer temps réel (`streaming`) ont chacun leurs clés, limitées à la lecture, l'écriture et la liste du bucket `warehouse`. L'identité `admin`, utilisée par aucun composant, sert à l'exploitation.
-- **Par groupes, en tout ou rien** : des Secrets qui partagent des valeurs forment un groupe (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Un groupe est créé en entier ou pas du tout : le script ne remplace jamais un Secret existant, et s'arrête si seuls certains Secrets d'un groupe existent. Un groupe ajouté plus tard se crée sur un cluster existant sans toucher aux autres. Trois groupes :
+- **Par groupes, en tout ou rien** : des Secrets qui partagent des valeurs forment un groupe (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Un groupe est créé en entier ou pas du tout : le script ne remplace jamais un Secret existant, et s'arrête si seuls certains Secrets d'un groupe existent. Un groupe ajouté plus tard se crée sur un cluster existant sans toucher aux autres. Quatre groupes :
   - `stack` : les cinq premiers Secrets ;
   - `nessie-db` : le rôle PostgreSQL de Nessie (voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)) ;
   - `streaming` : les clés du writer temps réel (ADR 010). Le script les ajoute aussi comme identité dans `seaweedfs-s3-config`, par [secrets/add_s3_identity.py](secrets/add_s3_identity.py), sans toucher aux autres identités. Sur un cluster existant, il faut ensuite redémarrer le filer de SeaweedFS, qui ne lit ses identités qu'au démarrage : le script affiche la commande.
+  - `monitoring` : le compte admin de Grafana (ADR 011), dans le namespace `monitoring`, que le script crée au besoin.
 - **Hors d'Argo CD** : les Secrets ne sont pas suivis par Argo CD, et portent des noms qu'aucun chart ne génère. Argo CD ne peut donc pas les supprimer.
 
 Lors du passage à ces Secrets, Argo CD a supprimé (`prune`) les Secrets que les charts ne généraient plus, sauf deux : `airflow-fernet-key` et `seaweedfs-s3-secret`. Les charts les déclarent comme hooks Helm (annotation `helm.sh/hook`), et Argo CD traite un hook à part : il ne le supprime jamais par `prune`. Ils ont été supprimés à la main. Ce piège vaut pour toute ressource déclarée en hook par un chart.
@@ -115,6 +116,34 @@ Pour essayer une modification avant de la commiter, on peut construire l'image e
 ```bash
 make streaming-image streaming-image-import
 ```
+
+## Supervision
+
+Métriques et logs de la stack ([ADR 011](../docs/adr/011-supervision.md)), dans le namespace `monitoring`, en trois Applications Argo CD :
+
+- **`monitoring`** : `kube-prometheus-stack` 92.14.1 ([monitoring/values.yaml](monitoring/values.yaml)). Prometheus garde 7 jours de métriques. Grafana a son mot de passe admin dans le Secret `grafana-admin`. Alertmanager est désactivé. Les tableaux de bord versionnés sont dans [monitoring/dashboards/](monitoring/dashboards/).
+- **`loki`** : Loki 7.5.0 en mode `SingleBinary` ([loki/values.yaml](loki/values.yaml)), sur un volume de 5 Gi, avec 7 jours de rétention.
+- **`alloy`** : Alloy 1.14.4 ([alloy/values.yaml](alloy/values.yaml)), un seul pod qui lit les logs de tous les pods par l'API Kubernetes et les envoie à Loki.
+
+Prometheus collecte tous les `ServiceMonitor` et `PodMonitor` du cluster :
+
+| Composant | Moniteur | Défini dans |
+| --- | --- | --- |
+| Nessie | `ServiceMonitor` sur `/q/metrics` (port de gestion) | chart Nessie, créé dès que la CRD existe |
+| Trino | `ServiceMonitor` sur `/metrics`, utilisateur `prometheus` sans mot de passe | [trino/values.yaml](trino/values.yaml) |
+| Kafka | `PodMonitor` sur les brokers (`strimziMetricsReporter`) et Kafka Exporter (retard des groupes) | [kafka/kafka.yaml](kafka/kafka.yaml), [monitoring/values.yaml](monitoring/values.yaml) |
+| Airflow | `ServiceMonitor` sur l'exporter StatsD du chart | [airflow/values.yaml](airflow/values.yaml), [monitoring/values.yaml](monitoring/values.yaml) |
+| Kubernetes | nœuds, pods, conteneurs (node-exporter, kube-state-metrics, kubelet) | `kube-prometheus-stack` |
+
+Accès à Grafana, avec le tableau de bord « WattLake » :
+
+```bash
+kubectl --context k3d-wattlake -n monitoring port-forward svc/monitoring-grafana 3000:80   # http://127.0.0.1:3000
+kubectl --context k3d-wattlake -n monitoring get secret grafana-admin \
+  -o jsonpath='{.data.admin-password}' | base64 --decode
+```
+
+Un tableau de bord se modifie dans le dépôt : `wattlake.json`, puis commit. Grafana n'a pas de volume, et une modification faite dans son interface est perdue au redémarrage.
 
 ## Dépannage
 

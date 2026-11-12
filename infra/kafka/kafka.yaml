@@ -28,6 +28,24 @@ spec:
       # Topics are declared in Git as KafkaTopic resources, managed by the
       # Topic Operator: a typo in a producer must not create a new topic.
       auto.create.topics.enable: false
+    # Prometheus metrics on port 9404 (tcp-prometheus), scraped by the kafka
+    # PodMonitor (infra/monitoring/values.yaml). The Strimzi metrics reporter
+    # needs no JMX exporter rules file, unlike jmxPrometheusExporter.
+    metricsConfig:
+      type: strimziMetricsReporter
+  # Kafka Exporter: topic offsets and consumer group lag, which the brokers do
+  # not export. The lag of "wattlake-writer" is how far the Iceberg table is
+  # behind the topic (docs/adr/010-ecriture-flux-iceberg.md).
+  kafkaExporter:
+    topicRegex: ".*"
+    groupRegex: ".*"
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
   # Topic Operator only: topics as KafkaTopic resources. No User Operator, as
   # the listener has no authentication.
   entityOperator:

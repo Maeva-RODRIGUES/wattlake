@@ -1,0 +1,389 @@
+{
+  "uid": "wattlake",
+  "title": "WattLake",
+  "description": "Fraîcheur du flux temps réel, DAG Airflow, Trino et Nessie (docs/adr/011-supervision.md).",
+  "tags": [
+    "wattlake"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "editable": true,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Flux temps réel (producteur, Kafka, writer)",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Retard du writer",
+      "description": "Messages du topic eco2mix-realtime pas encore écrits dans la table Iceberg (lag du groupe wattlake-writer).",
+      "id": 2,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(kafka_consumergroup_lag{consumergroup=\"wattlake-writer\", topic=\"eco2mix-realtime\"})",
+          "legendFormat": "",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages publiés par heure",
+      "description": "Messages ajoutés au topic eco2mix-realtime par le producteur, révisions comprises.",
+      "id": 3,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 9,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(kafka_topic_partition_current_offset{topic=\"eco2mix-realtime\"}[1h]))",
+          "legendFormat": "messages",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Retard du writer dans le temps",
+      "description": "Remonte jusqu'à un lot (5 minutes) après chaque rafraîchissement de RTE, puis redescend à 0.",
+      "id": 4,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 15,
+        "y": 1,
+        "w": 9,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(kafka_consumergroup_lag{consumergroup=\"wattlake-writer\", topic=\"eco2mix-realtime\"})",
+          "legendFormat": "retard",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "title": "Airflow",
+      "id": 5,
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Exécutions de DAG réussies (par heure)",
+      "description": "",
+      "id": 6,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (dag_id) (increase(airflow_dagrun_duration_count[1h]))",
+          "legendFormat": "{{dag_id}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Durée moyenne d'un DAG réussi",
+      "description": "Sur la dernière heure.",
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (dag_id) (increase(airflow_dagrun_duration_sum[1h])) / sum by (dag_id) (increase(airflow_dagrun_duration_count[1h]))",
+          "legendFormat": "{{dag_id}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Exécutions de DAG en échec (par heure)",
+      "description": "",
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (dag_id) (increase(airflow_dagrun_failed_count[1h]))",
+          "legendFormat": "{{dag_id}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "title": "Trino et Nessie",
+      "id": 9,
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requêtes Trino terminées et en échec (par minute)",
+      "description": "",
+      "id": 10,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "rate({__name__=~\"trino_execution_name_QueryManager_CompletedQueries(_total)?\"}[5m]) * 60",
+          "legendFormat": "terminées",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        },
+        {
+          "expr": "rate({__name__=~\"trino_execution_name_QueryManager_FailedQueries(_total)?\"}[5m]) * 60",
+          "legendFormat": "en échec",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "timeseries",
+      "title": "Opérations du catalogue Nessie (par seconde)",
+      "description": "Appels au version store de Nessie, par méthode : lectures de références, commits, fusions.",
+      "id": 11,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (method) (rate(nessie_versionstore_request_total[5m]))",
+          "legendFormat": "{{method}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "type": "row",
+      "title": "Logs du flux temps réel",
+      "id": 12,
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Producteur et writer",
+      "description": "Logs des pods producer et writer, depuis Loki.",
+      "id": 13,
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "expr": "{namespace=\"wattlake\", app=~\"producer|writer\"}",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  }
+}

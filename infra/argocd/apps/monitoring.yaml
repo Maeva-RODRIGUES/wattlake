@@ -1,0 +1,41 @@
+# Argo CD Application for the metrics stack: Prometheus Operator, Prometheus,
+# Grafana (docs/adr/011-supervision.md). Synced automatically from the main branch.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  sources:
+    # The chart, at its pinned version: 92.14.1 (2026-10-27), the latest
+    # release at least two weeks old when pinning.
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      chart: kube-prometheus-stack
+      targetRevision: 92.14.1
+      helm:
+        releaseName: monitoring
+        valueFiles:
+          - $values/infra/monitoring/values.yaml
+    # This repository, referenced as $values for the values file above.
+    - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+      targetRevision: main
+      ref: values
+    # The Grafana dashboards kept in Git (kustomize ConfigMaps).
+    - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+      targetRevision: main
+      path: infra/monitoring/dashboards
+  # Automated sync: the cluster follows the main branch. prune deletes what is
+  # removed from Git, selfHeal reverts changes made by hand in the cluster.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The Prometheus Operator CRDs exceed the 256 KB last-applied-configuration
+      # annotation of client-side apply.
+      - ServerSideApply=true

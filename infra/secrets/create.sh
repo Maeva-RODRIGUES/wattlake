@@ -16,30 +16,44 @@
 #   3. streaming: the S3 key pair of the real-time writer, both in its Secret
 #      and as an identity added to the SeaweedFS configuration of group 1
 #      (by add_s3_identity.py), so that it can be added to an existing cluster.
+#   4. monitoring: the Grafana admin credentials, in the "monitoring" namespace.
 #
 # Usage: make secrets
 set -euo pipefail
 
 CONTEXT="k3d-wattlake"
 NAMESPACE="wattlake"
+MONITORING_NAMESPACE="monitoring"
 STACK_SECRETS=(seaweedfs-s3-config nessie-credentials trino-credentials postgres-credentials airflow-credentials)
 NESSIE_DB_SECRETS=(nessie-db-credentials)
 STREAMING_SECRETS=(streaming-credentials)
+MONITORING_SECRETS=(grafana-admin)
 LABEL="app.kubernetes.io/part-of=wattlake"
 
 kubectl_ns() {
     kubectl --context "$CONTEXT" --namespace "$NAMESPACE" "$@"
 }
 
-# Prints "create" when no Secret of the group exists, "skip" when all exist,
-# and fails when only some exist.
+kubectl_monitoring() {
+    kubectl --context "$CONTEXT" --namespace "$MONITORING_NAMESPACE" "$@"
+}
+
+# Creates a namespace if it does not exist yet.
+ensure_namespace() {
+    if [ -z "$(kubectl --context "$CONTEXT" get namespace "$1" --ignore-not-found --output name)" ]; then
+        kubectl --context "$CONTEXT" create namespace "$1"
+    fi
+}
+
+# Prints "create" when no Secret of the group exists in the namespace, "skip"
+# when all exist, and fails when only some exist.
 group_action() {
-    local group="$1"; shift
+    local group="$1" namespace="$2"; shift 2
     local existing=()
     for name in "$@"; do
         # Command substitution, not a redirection: a confined kubectl (snap)
         # prints nothing when its output is redirected to a file.
-        if [ -n "$(kubectl_ns get secret "$name" --ignore-not-found --output name)" ]; then
+        if [ -n "$(kubectl --context "$CONTEXT" --namespace "$namespace" get secret "$name" --ignore-not-found --output name)" ]; then
             existing+=("$name")
         fi
     done
@@ -54,14 +68,13 @@ group_action() {
     fi
 }
 
-# Both checks run before anything is created.
-stack_action=$(group_action stack "${STACK_SECRETS[@]}")
-nessie_db_action=$(group_action nessie-db "${NESSIE_DB_SECRETS[@]}")
-streaming_action=$(group_action streaming "${STREAMING_SECRETS[@]}")
+# Every check runs before anything is created.
+stack_action=$(group_action stack "$NAMESPACE" "${STACK_SECRETS[@]}")
+nessie_db_action=$(group_action nessie-db "$NAMESPACE" "${NESSIE_DB_SECRETS[@]}")
+streaming_action=$(group_action streaming "$NAMESPACE" "${STREAMING_SECRETS[@]}")
+monitoring_action=$(group_action monitoring "$MONITORING_NAMESPACE" "${MONITORING_SECRETS[@]}")
 
-if [ -z "$(kubectl --context "$CONTEXT" get namespace "$NAMESPACE" --ignore-not-found --output name)" ]; then
-    kubectl --context "$CONTEXT" create namespace "$NAMESPACE"
-fi
+ensure_namespace "$NAMESPACE"
 
 # Hexadecimal values: no character needs escaping in a URL, SQL or JSON.
 hex() { openssl rand -hex "$1"; }
@@ -201,8 +214,25 @@ if [ "$stack_action" = "skip" ]; then
 fi
 }
 
+create_monitoring() {
+# Created before Argo CD deploys Grafana (infra/monitoring/values.yaml), in its namespace.
+ensure_namespace "$MONITORING_NAMESPACE"
+cat <<EOF | kubectl_monitoring create --filename -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-admin
+  labels: {app.kubernetes.io/part-of: wattlake}
+type: Opaque
+stringData:
+  # Key names set in infra/monitoring/values.yaml (grafana.admin).
+  admin-user: admin
+  admin-password: $(hex 16)
+EOF
+}
+
 # stack first: the streaming group adds an identity to its SeaweedFS configuration.
-for group in stack nessie_db streaming; do
+for group in stack nessie_db streaming monitoring; do
     action_var="${group}_action"
     if [ "${!action_var}" = "create" ]; then
         "create_${group}"
@@ -212,3 +242,4 @@ for group in stack nessie_db streaming; do
 done
 
 kubectl_ns get secrets --selector "$LABEL"
+kubectl_monitoring get secrets --selector "$LABEL"

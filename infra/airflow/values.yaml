@@ -78,9 +78,18 @@ postgresql:
   enabled: false
 redis:
   enabled: false
-# Metrics come later with the stack monitoring.
+# StatsD exporter: Airflow sends its metrics (scheduler loop, DAG runs, task
+# durations and states) over StatsD, and the exporter serves them to Prometheus
+# on port 9102 (airflow-statsd ServiceMonitor, infra/monitoring/values.yaml).
 statsd:
-  enabled: false
+  enabled: true
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
 
 # Task logs are kept on small volumes (the chart default is 100Gi each).
 # With LocalExecutor the scheduler runs the tasks, and the chart sizes its log

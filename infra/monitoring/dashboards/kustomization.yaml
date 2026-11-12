@@ -1,0 +1,17 @@
+# Grafana dashboards kept in Git, deployed with the monitoring stack
+# (second source of infra/argocd/apps/monitoring.yaml). Grafana's sidecar loads
+# every ConfigMap labelled grafana_dashboard=1, in any namespace.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+generatorOptions:
+  # Stable names: Argo CD updates the ConfigMap instead of creating a new one
+  # on every change, and the sidecar reloads it.
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: wattlake
+configMapGenerator:
+  - name: grafana-dashboard-wattlake
+    files:
+      - wattlake.json

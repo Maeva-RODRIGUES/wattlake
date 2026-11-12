@@ -55,6 +55,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | Transformations | dbt (adaptateur Trino) | Construit les couches silver et gold, avec des tests |
 | Orchestration | Airflow | Planifie l'ingestion batch et lance dbt chaque fois que bronze change |
 | Streaming | Kafka (KRaft), opérateur Strimzi ; producteur et writer Python (confluent-kafka, PyIceberg) | Le producteur publie les mesures temps réel dans Kafka (ADR 009), le writer les écrit dans une table bronze Iceberg (ADR 010) |
+| Supervision | Prometheus, Grafana, Loki, Alloy (ADR 011) | Collecte les métriques et les logs de toute la stack ; le tableau de bord « WattLake » suit la fraîcheur du flux temps réel |
 | Intégration continue | GitHub Actions, Dependabot (ADR 005) | Vérifie le code à chaque modification et publie les images Airflow et temps réel |
 | Déploiement | Kubernetes, Helm, Argo CD | Déploie la stack en GitOps : le cluster suit la branche `main` |
 
@@ -80,7 +81,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 
 **Étape 4 : temps réel et observabilité**
 - [x] Flux temps réel : API, Kafka, Iceberg (ADR 009 et 010)
-- [ ] Métriques et logs des traitements
+- [x] Métriques et logs des traitements : Prometheus, Grafana, Loki (ADR 011)
 
 ## Démarrer
 
@@ -165,9 +166,14 @@ kubectl --context k3d-wattlake -n wattlake exec -it deploy/trino-coordinator -- 
 kubectl --context k3d-wattlake -n wattlake port-forward svc/trino 8080:8080     # Trino : http://127.0.0.1:8080
 kubectl --context k3d-wattlake -n wattlake port-forward svc/nessie 19120:19120  # Nessie : http://127.0.0.1:19120
 kubectl --context k3d-wattlake -n wattlake port-forward svc/airflow-api-server 8081:8080  # Airflow : http://127.0.0.1:8081
+kubectl --context k3d-wattlake -n monitoring port-forward svc/monitoring-grafana 3000:80   # Grafana : http://127.0.0.1:3000
 
 # Mot de passe de l'utilisateur « admin » d'Airflow
 kubectl --context k3d-wattlake -n wattlake get secret airflow-credentials \
+  -o jsonpath='{.data.admin-password}' | base64 --decode
+
+# Mot de passe de l'utilisateur « admin » de Grafana
+kubectl --context k3d-wattlake -n monitoring get secret grafana-admin \
   -o jsonpath='{.data.admin-password}' | base64 --decode
 ```
 
@@ -242,6 +248,7 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 008 : Write-Audit-Publish avec les branches Nessie](docs/adr/008-write-audit-publish.md), ou comment dbt écrit sur une branche `audit`, teste, puis fusionne dans `main` en un seul commit.
 - [ADR 009 : producteur temps réel vers Kafka](docs/adr/009-producteur-temps-reel.md), ou pourquoi un `Deployment` dédié plutôt qu'une tâche Airflow, du JSON plutôt qu'Avro, et un curseur lu dans Kafka avec un topic compacté.
 - [ADR 010 : écriture du flux temps réel dans Iceberg](docs/adr/010-ecriture-flux-iceberg.md), ou pourquoi un consommateur PyIceberg plutôt que Kafka Connect, Spark ou Flink, une table en ajout seul, et des offsets stockés dans les snapshots Iceberg pour écrire exactement une fois.
+- [ADR 011 : supervision de la stack](docs/adr/011-supervision.md), ou pourquoi `kube-prometheus-stack` et ses `ServiceMonitor`, Loki en mode `SingleBinary` et Alloy plutôt qu'Elasticsearch.
 
 ## Ce que je ferais en production
 

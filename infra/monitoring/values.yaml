@@ -1,0 +1,120 @@
+# Metrics of the local WattLake cluster: Prometheus Operator, Prometheus,
+# Grafana, node-exporter and kube-state-metrics (docs/adr/011-supervision.md).
+# Chart: kube-prometheus-stack 92.14.1 (version pinned in infra/argocd/apps/monitoring.yaml).
+# Deployed by Argo CD in the "monitoring" namespace, from the main branch.
+
+# No alerting in a local cluster: Alertmanager would have no one to notify.
+alertmanager:
+  enabled: false
+
+# k3s runs the control plane in a single process and does not expose these
+# components' metrics endpoints: their targets would always be down.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    # Pick up every ServiceMonitor and PodMonitor of the cluster, not only the
+    # ones labelled for this Helm release: the Nessie and Trino charts create
+    # their own, and the Kafka ones are defined below.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    # One week of history is enough to follow the pipelines locally.
+    retention: 7d
+    retentionSize: 4GB
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+  # Kafka: the brokers' metrics (Strimzi metrics reporter) and the Kafka
+  # Exporter, which reports consumer group lag (the writer's freshness). Both
+  # pods carry strimzi.io/kind=Kafka and serve /metrics on tcp-prometheus
+  # (packaging/examples/metrics in the Strimzi repository).
+  additionalPodMonitors:
+    - name: kafka
+      namespaceSelector:
+        matchNames: [wattlake]
+      selector:
+        matchExpressions:
+          - key: strimzi.io/kind
+            operator: In
+            values: [Kafka]
+      podMetricsEndpoints:
+        - port: tcp-prometheus
+          path: /metrics
+          relabelings:
+            # Keep the strimzi.io/* labels (cluster, name, pool) on every series.
+            - action: labelmap
+              regex: __meta_kubernetes_pod_label_(strimzi_io_.+)
+              replacement: $1
+
+  # Airflow: the chart's StatsD exporter, which turns the scheduler's and the
+  # tasks' StatsD metrics into Prometheus metrics (infra/airflow/values.yaml).
+  additionalServiceMonitors:
+    - name: airflow-statsd
+      namespaceSelector:
+        matchNames: [wattlake]
+      selector:
+        matchLabels:
+          tier: airflow
+          component: statsd
+      endpoints:
+        - port: statsd-scrape
+          path: /metrics
+
+grafana:
+  # Admin credentials from a Secret created by "make secrets", outside Git
+  # (docs/adr/006-gestion-des-secrets.md), never the chart's default.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  # Dashboards are provisioned from ConfigMaps labelled grafana_dashboard=1
+  # (infra/monitoring/dashboards/), and kept in Git: edits made in the web
+  # interface are lost on restart.
+  persistence:
+    enabled: false
+  sidecar:
+    datasources:
+      # Alertmanager is disabled above: no data source pointing to it.
+      alertmanager:
+        enabled: false
+  # Logs, next to the metrics (infra/loki/values.yaml).
+  additionalDataSources:
+    - name: Loki
+      uid: loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring.svc:3100
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi

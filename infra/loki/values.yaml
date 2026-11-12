@@ -1,0 +1,67 @@
+# Logs of the local WattLake cluster (docs/adr/011-supervision.md), queried
+# from Grafana. Collected by Alloy (infra/alloy/values.yaml).
+# Chart: loki 7.5.0 (version pinned in infra/argocd/apps/loki.yaml).
+# Deployed by Argo CD in the "monitoring" namespace, from the main branch.
+
+# Every Loki component in one pod, the mode meant for small volumes. The
+# scalable modes split reads, writes and the backend into separate pods.
+deploymentMode: SingleBinary
+
+loki:
+  # One tenant: no X-Scope-OrgID header needed.
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  # Chunks and index on the pod's volume. In production, an object store
+  # (SeaweedFS here) would let Loki scale and survive the loss of a volume.
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2026-11-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  # One week of logs, deleted by the compactor.
+  limits_config:
+    retention_period: 168h
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+
+singleBinary:
+  replicas: 1
+  persistence:
+    storageClass: local-path
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# The scalable modes' components.
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# Grafana and Alloy reach the Loki service directly: no nginx gateway.
+gateway:
+  enabled: false
+# Memcached caches, sized for large clusters (several GB of memory by default).
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+# Synthetic log generator and Helm test pod.
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
