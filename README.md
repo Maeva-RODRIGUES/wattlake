@@ -4,7 +4,7 @@
 
 Plateforme Lakehouse open source construite sur les données publiques du mix électrique français (RTE, éCO2mix).
 
-> **Projet en cours**, démarré en novembre 2026. La feuille de route ci-dessous indique ce qui fonctionne déjà et ce qui reste à construire.
+> Construit en novembre 2026. Tout le périmètre prévu fonctionne, de l'ingestion batch au flux temps réel et à la supervision ; les limites connues et les suites possibles sont listées en fin de page.
 
 ## Pourquoi ce projet
 
@@ -14,9 +14,25 @@ J'ai choisi les données de production et de consommation électrique parce qu'e
 
 ## Aperçu
 
+![Liste des Applications Argo CD, toutes synchronisées et saines](docs/images/argocd-applications.png)
+
+*Les 12 Applications Argo CD de la stack, toutes `Synced` et `Healthy` : le cluster est exactement ce que décrit la branche `main` du dépôt. Les charts Helm sont épinglés à une version, les manifestes du dépôt suivent `main`.*
+
+![Arbre des ressources de l'Application streaming dans Argo CD](docs/images/argocd-streaming.png)
+
+*L'Application `streaming` : le producteur (API vers Kafka) et le writer (Kafka vers Iceberg), chacun dans un `Deployment` à un réplica. Les anciens ReplicaSets sont les versions précédentes de l'image, gardées pour un retour arrière.*
+
+![Tableau de bord WattLake dans Grafana](docs/images/grafana-wattlake.png)
+
+*Le tableau de bord « WattLake » dans Grafana : retard du writer (ici 14 messages, le dernier rafraîchissement de RTE, qui attendent le prochain lot du writer, au plus 5 minutes ; 0 quand la table Iceberg est à jour), messages publiés, exécutions des DAG Airflow, requêtes Trino, opérations du catalogue Nessie, et les logs du producteur et du writer collectés par Loki.*
+
+![Versions d'un quart d'heure dans la table bronze temps réel](docs/images/trino-realtime-versions.png)
+
+*Les versions d'un même quart d'heure dans la table `bronze.eco2mix_national_realtime`, lues par Trino. Le producteur republie les trois dernières heures à chaque rafraîchissement de RTE : chaque version est une ligne, avec la date de rafraîchissement et son offset Kafka. Ici, RTE n'a pas révisé la mesure. Le résultat est lu par l'API REST de Trino et mis en forme par le script de captures, l'interface de Trino n'affichant pas les résultats des requêtes.*
+
 ![Historique des commits de la branche main dans l'interface de Nessie](docs/images/nessie-commits.png)
 
-*Historique de la branche `main` dans Nessie après un smoke test. Chaque opération lancée depuis Trino (suppression, création du namespace, création de la table, insertion) devient un commit, comme dans Git. C'est ce versionnement qui permettra de revenir à un état antérieur et de travailler sur des branches isolées avant de publier.*
+*Historique de la branche `main` dans Nessie après un smoke test. Chaque opération lancée depuis Trino (suppression, création du namespace, création de la table, insertion) devient un commit, comme dans Git. C'est ce versionnement qui permet de revenir à un état antérieur, et au DAG dbt de travailler sur une branche isolée avant de publier (Write-Audit-Publish).*
 
 ![Détail de la requête de contrôle du smoke test dans l'interface de Trino](docs/images/trino-query.png)
 
@@ -26,12 +42,14 @@ Ces captures sont générées par `make screenshots`.
 
 ## Architecture
 
+### Flux de données
+
 ```mermaid
 flowchart LR
     API[API publique RTE<br/>éCO2mix] -->|export Parquet, mois par mois| AF[Airflow<br/>DAG bronze]
     AF -->|PyIceberg,<br/>catalogue REST| BR[(bronze)]
     BR -.->|Asset : déclenche| DBT[Airflow<br/>DAG dbt]
-    DBT -->|dbt build sur Trino,<br/>API native Nessie| SG[(silver, gold<br/>+ 44 tests)]
+    DBT -->|dbt build sur Trino,<br/>branche audit puis fusion| SG[(silver, gold<br/>+ tests dbt)]
     NES[Nessie<br/>catalogue versionné] --- BR
     NES --- SG
     S3[SeaweedFS<br/>stockage S3] --- BR
@@ -43,7 +61,27 @@ flowchart LR
     S3 --- RT
 ```
 
-Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Helm et, à terme, synchronisée depuis ce dépôt par Argo CD. Les tables sont au format Iceberg. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt, qui reconstruit silver et gold sur Trino et lance les tests. En parallèle, un producteur publie les mesures temps réel dans Kafka, et un writer les ajoute à une table bronze Iceberg, exactement une fois, en un commit toutes les 5 minutes au plus.
+Les tables sont au format Iceberg, dans le catalogue Nessie et sur SeaweedFS. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt : il reconstruit silver et gold sur une branche Nessie, lance les tests, et ne fusionne dans `main` que s'ils passent (ADR 008). En parallèle, un producteur publie les mesures temps réel dans Kafka, et un writer les ajoute à une table bronze Iceberg, exactement une fois, en un commit toutes les 5 minutes au plus (ADR 009 et 010).
+
+### Plateforme
+
+```mermaid
+flowchart LR
+    DEV[Dépôt GitHub<br/>branche main] -->|CI : lint, tests,<br/>dbt parse| CI[GitHub Actions]
+    CI -->|images Airflow<br/>et temps réel| GHCR[ghcr.io]
+    DEV -->|GitOps| ARGO[Argo CD]
+    subgraph K3D[Cluster k3d local]
+        ARGO -->|charts Helm et manifestes| STACK[SeaweedFS, PostgreSQL, Nessie, Trino,<br/>Airflow, Kafka, producteur, writer]
+        STACK -->|métriques| PROM[Prometheus]
+        STACK -->|logs, via Alloy| LOKI[Loki]
+        PROM --> GRAF[Grafana]
+        LOKI --> GRAF
+    end
+    GHCR -->|images épinglées par SHA| STACK
+    SEC[make secrets] -.->|Secrets générés hors du dépôt| STACK
+```
+
+Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie depuis la branche `main` et la maintient synchronisée : un changement fait à la main dans le cluster est annulé. Seuls Argo CD lui-même et les Secrets sont installés par le Makefile (ADR 006).
 
 | Brique | Outil | Rôle |
 | --- | --- | --- |
@@ -93,11 +131,18 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d), déployée avec Hel
 | k3d | 5.9 (k3s 1.35.5) | Crée le cluster Kubernetes local |
 | kubectl | 1.35 | Pilote le cluster |
 | Helm | 3.12 | Déploie les composants de la stack |
-| Python | 3.12 | Utilisé par le smoke test |
+| Python | 3.12 | Utilisé par le smoke test et le script de captures |
 | uv | 0.11 | Crée les environnements Python 3.13 du code d'ingestion, du flux temps réel et du projet dbt |
 | direnv | 2.32 | Charge les variables d'environnement du projet (optionnel) |
 
-Prévoir 16 Go de mémoire libre : les limites mémoire des composants atteignent environ 13 Go, dont 5 Go pour Trino et 5,5 Go pour Airflow, et les Jobs d'installation d'Airflow ajoutent temporairement 2 Go.
+Prévoir 16 Go de mémoire libre. La stack consomme environ 8 Go en fonctionnement normal ; ses limites mémoire, qui ne sont jamais toutes atteintes en même temps, totalisent environ 20 Go, dont 5 Go pour Trino, 5,5 Go pour Airflow, 1,5 Go pour Kafka et 2,5 Go pour la supervision.
+
+Sous Linux, relever les limites d'inotify, partagées par les nœuds k3d avec le reste de la machine. Avec la valeur par défaut (128 instances), le suivi des logs des pods échoue (`failed to create fsnotify watcher: too many open files`) dès qu'Alloy collecte ceux de toute la stack :
+
+```bash
+sudo sysctl -w fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288
+printf 'fs.inotify.max_user_instances = 512\nfs.inotify.max_user_watches = 524288\n' | sudo tee /etc/sysctl.d/99-inotify.conf
+```
 
 ### Isoler l'environnement du projet
 
@@ -119,11 +164,14 @@ make rest-catalog-test  # écriture PyIceberg par le catalogue REST, lue depuis 
 make dbt ARGS="debug"   # projet dbt : configuration et connexion à Trino (voir transform/README.md)
 ```
 
-`make up` crée le cluster et les Secrets de la stack, installe Argo CD, puis lui confie l'Application racine. Les identifiants (clés S3, mots de passe, clés d'Airflow) sont tirés au hasard sur le poste par `make secrets` : ils ne sont jamais écrits dans le dépôt (voir l'[ADR 006](docs/adr/006-gestion-des-secrets.md)). Argo CD déploie ensuite SeaweedFS, PostgreSQL, Nessie, Trino et Airflow depuis la branche `main` du dépôt, et les maintient synchronisés : un changement fait à la main dans le cluster est annulé (voir [infra/README.md](infra/README.md)). `make up` peut être relancé : il ne recrée pas le cluster existant.
+`make up` crée le cluster et les Secrets de la stack, installe Argo CD, puis lui confie l'Application racine. Les identifiants (clés S3, mots de passe, clés d'Airflow) sont tirés au hasard sur le poste par `make secrets` : ils ne sont jamais écrits dans le dépôt (voir l'[ADR 006](docs/adr/006-gestion-des-secrets.md)). Argo CD déploie ensuite toute la stack depuis la branche `main` du dépôt : SeaweedFS, PostgreSQL, Nessie, Trino, Airflow, l'opérateur Strimzi et Kafka, le producteur et le writer temps réel, puis la supervision (Prometheus, Grafana, Loki, Alloy). Il la maintient synchronisée : un changement fait à la main dans le cluster est annulé (voir [infra/README.md](infra/README.md)). Le premier déploiement prend une dizaine de minutes. `make up` peut être relancé : il ne recrée pas le cluster existant.
 
 ### Déployer une modification
 
-Le cluster suit la branche `main` : modifier un fichier de valeurs dans `infra/`, puis le pousser sur `main`, suffit à le déployer. Pour une nouvelle version de l'image Airflow (code d'ingestion, DAG ou projet dbt), attendre que la CI du commit sur `main` ait publié l'image, puis reporter son SHA dans `images.airflow.tag` de [infra/airflow/values.yaml](infra/airflow/values.yaml) et pousser ce changement.
+Le cluster suit la branche `main` : modifier un fichier de valeurs dans `infra/`, puis le pousser sur `main`, suffit à le déployer. Pour une nouvelle version d'une image construite par la CI, attendre qu'elle ait été publiée pour le commit sur `main`, puis reporter son SHA et pousser ce changement :
+
+- image Airflow (code d'ingestion, DAG, projet dbt) : `images.airflow.tag` de [infra/airflow/values.yaml](infra/airflow/values.yaml) ;
+- image temps réel (producteur et writer) : `newTag` de [infra/streaming/kustomization.yaml](infra/streaming/kustomization.yaml).
 
 ### Interface d'Argo CD
 
@@ -189,8 +237,10 @@ GROUP BY 1 ORDER BY 1;
 ### Régénérer les captures
 
 ```bash
-make screenshots     # smoke test, puis captures de Nessie et Trino dans docs/images/
+make screenshots     # smoke test, puis captures de Nessie, Trino, Argo CD et Grafana dans docs/images/
 ```
+
+Les mots de passe d'Argo CD et de Grafana sont lus dans leurs Secrets par le script ([tools/screenshots/capture.py](tools/screenshots/capture.py)) et seulement saisis dans les formulaires de connexion.
 
 Au premier lancement, la cible crée un environnement virtuel `.venv` dans le projet et y installe Playwright et un Chromium headless (environ 450 Mo). Rien n'est installé en dehors du projet : supprimer `.venv` suffit à tout retirer.
 
@@ -250,14 +300,22 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 010 : écriture du flux temps réel dans Iceberg](docs/adr/010-ecriture-flux-iceberg.md), ou pourquoi un consommateur PyIceberg plutôt que Kafka Connect, Spark ou Flink, une table en ajout seul, et des offsets stockés dans les snapshots Iceberg pour écrire exactement une fois.
 - [ADR 011 : supervision de la stack](docs/adr/011-supervision.md), ou pourquoi `kube-prometheus-stack` et ses `ServiceMonitor`, Loki en mode `SingleBinary` et Alloy plutôt qu'Elasticsearch.
 
+## Limites et suites possibles
+
+- **Le temps réel s'arrête à bronze.** La table `bronze.eco2mix_national_realtime` n'alimente pas encore silver et gold : il faudrait un modèle dbt qui garde la dernière version de chaque quart d'heure et la raccorde à l'historique consolidé.
+- **Pas de maintenance des tables Iceberg.** Le writer fait une centaine de commits par jour : il faudrait compacter les petits fichiers et nettoyer ceux que plus aucun commit Nessie ne référence (GC de Nessie, voir l'ADR 010).
+- **Pas d'alertes.** Alertmanager est désactivé : le retard du writer et les échecs de DAG se lisent dans Grafana, sans notification (ADR 011).
+- **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS : `make cluster-dns-check` le détecte, `make cluster-restart` le corrige (voir [infra/README.md](infra/README.md)).
+
 ## Ce que je ferais en production
 
 Ce projet tourne en local, avec des choix simplifiés. Sur une plateforme en production, je prévoirais en plus :
 
 - une base PostgreSQL gérée, avec haute disponibilité et sauvegardes, pour Airflow et Nessie, voire une instance par composant (voir l'ADR 007) ;
 - une gestion des secrets centralisée : External Secrets et le gestionnaire de secrets du cloud, à la place de `make secrets` (voir l'ADR 006) ;
-- de la haute disponibilité sur le stockage objet et sur le coordinateur Trino ;
-- de la supervision et des alertes sur la fraîcheur et la qualité des données.
+- de la haute disponibilité sur le stockage objet, le coordinateur Trino et Kafka (trois brokers, réplication 3) ;
+- des alertes sur la fraîcheur et la qualité des données, et Loki sur un stockage objet (ADR 011) ;
+- un Schema Registry si d'autres producteurs ou consommateurs utilisent Kafka (ADR 009).
 
 ## Auteure
 

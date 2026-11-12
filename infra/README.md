@@ -172,3 +172,21 @@ Deux corrections permanentes ont été écartées :
 - des serveurs DNS publics fixes dans CoreDNS (`1.1.1.1`, par exemple) : le cluster ne dépendrait plus du réseau local, mais les réseaux d'entreprise et les VPN bloquent souvent le DNS sortant, et toutes les requêtes partiraient chez un tiers ;
 - faire écouter systemd-resolved sur l'interface Docker, qui suit les changements de réseau : c'est une configuration système de l'ordinateur, hors du dépôt, donc non reproductible.
 
+
+### Logs incomplets : « failed to create fsnotify watcher: too many open files »
+
+**Symptômes** : dans Grafana, les logs d'un pod se limitent à `failed to create fsnotify watcher: too many open files`, ou ne s'affichent pas. `kubectl logs -f` sur un pod affiche quelques lignes puis la même erreur.
+
+**Cause** : pour suivre les logs d'un conteneur, le kubelet ouvre une instance inotify. Les nœuds k3d sont des conteneurs qui partagent le noyau de la machine, et tournent en root : toutes leurs instances comptent sur la même limite, `fs.inotify.max_user_instances`, partagée avec les autres processus root. Avec la valeur par défaut de nombreuses distributions (128), elle est atteinte dès qu'Alloy suit les logs de toute la stack (une soixantaine de conteneurs). Le problème est le même avec kind.
+
+**Vérifier** : `sysctl fs.inotify.max_user_instances`.
+
+**Corriger**, sur la machine (pas dans le dépôt : c'est un réglage du noyau) :
+
+```bash
+sudo sysctl -w fs.inotify.max_user_instances=512 fs.inotify.max_user_watches=524288
+printf 'fs.inotify.max_user_instances = 512\nfs.inotify.max_user_watches = 524288\n' | sudo tee /etc/sysctl.d/99-inotify.conf
+kubectl --context k3d-wattlake -n monitoring rollout restart deployment/alloy
+```
+
+La première commande applique les valeurs, la deuxième les garde au redémarrage de la machine, la troisième fait rouvrir à Alloy les suivis qui avaient échoué. Ce sont les valeurs que recommande la documentation de kind.
