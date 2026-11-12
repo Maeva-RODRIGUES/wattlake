@@ -143,8 +143,8 @@
     },
     {
       "type": "timeseries",
-      "title": "Exécutions de DAG réussies (par heure)",
-      "description": "",
+      "title": "Exécutions de DAG réussies",
+      "description": "Total depuis le démarrage de l'exporter StatsD d'Airflow (remis à zéro à son redémarrage).",
       "id": 6,
       "datasource": {
         "type": "prometheus",
@@ -158,7 +158,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (dag_id) (increase(airflow_dagrun_duration_count[1h]))",
+          "expr": "sum by (dag_id) (airflow_dagrun_duration_count)",
           "legendFormat": "{{dag_id}}",
           "refId": "A",
           "datasource": {
@@ -178,7 +178,7 @@
     {
       "type": "timeseries",
       "title": "Durée moyenne d'un DAG réussi",
-      "description": "Sur la dernière heure.",
+      "description": "Moyenne depuis le démarrage de l'exporter StatsD d'Airflow.",
       "id": 7,
       "datasource": {
         "type": "prometheus",
@@ -192,7 +192,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (dag_id) (increase(airflow_dagrun_duration_sum[1h])) / sum by (dag_id) (increase(airflow_dagrun_duration_count[1h]))",
+          "expr": "sum by (dag_id) (airflow_dagrun_duration_sum) / sum by (dag_id) (airflow_dagrun_duration_count)",
           "legendFormat": "{{dag_id}}",
           "refId": "A",
           "datasource": {
@@ -210,9 +210,9 @@
       "options": {}
     },
     {
-      "type": "timeseries",
-      "title": "Exécutions de DAG en échec (par heure)",
-      "description": "",
+      "type": "stat",
+      "title": "Exécutions de DAG en échec",
+      "description": "Total depuis le démarrage de l'exporter StatsD d'Airflow. 0 tant qu'aucun DAG n'a échoué.",
       "id": 8,
       "datasource": {
         "type": "prometheus",
@@ -226,8 +226,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (dag_id) (increase(airflow_dagrun_failed_count[1h]))",
-          "legendFormat": "{{dag_id}}",
+          "expr": "sum(airflow_dagrun_failed_count)",
+          "legendFormat": "",
           "refId": "A",
           "datasource": {
             "type": "prometheus",
@@ -237,7 +237,8 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "short",
+          "noValue": "0"
         },
         "overrides": []
       },
