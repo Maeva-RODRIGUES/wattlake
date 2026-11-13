@@ -48,11 +48,21 @@ catalog:
         # credentials (clientIam stays disabled), which would need STS.
         requestSigningEnabled: false
 
-# Quarkus JVM: sized for a single developer workload.
+# Quarkus JVM. With 512Mi, the image's default heap of 80% of the limit
+# (-XX:MaxRAMPercentage=80) left too little for the memory outside the heap
+# (classes, threads, compiled code): the container was OOMKilled under the
+# load of the hourly dbt runs, the streaming writer and Nessie GC, before the
+# JVM ran short of heap.
 resources:
   requests:
     cpu: 100m
-    memory: 256Mi
+    memory: 512Mi
   limits:
     cpu: "1"
-    memory: 512Mi
+    memory: 1Gi
+extraEnv:
+  # Heap capped at 60% of the limit (about 600 MB), read by the image's
+  # run-java script, which turns it into -XX:MaxRAMPercentage: the rest of the
+  # gigabyte is for the memory outside the heap.
+  - name: JAVA_MAX_MEM_RATIO
+    value: "60"
