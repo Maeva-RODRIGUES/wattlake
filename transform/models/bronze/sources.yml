@@ -3,9 +3,10 @@ version: 2
 sources:
   - name: bronze
     description: >
-      Raw eCO2mix data, loaded by the Airflow DAG eco2mix_history_to_bronze
-      (ingestion/). Values are kept as the source publishes them: see
-      docs/sources.md for the fields, units and known quirks.
+      Raw eCO2mix data: the history, loaded by the Airflow DAG
+      eco2mix_history_to_bronze (ingestion/), and the real-time stream, written
+      by the streaming writer (streaming/). Values are kept as the source
+      publishes them: see docs/sources.md for the fields, units and known quirks.
     # Catalog of the target: bronze is read on the branch dbt writes to, so
     # the audit branch is built from the bronze snapshot it was created with.
     database: "{{ target.database }}"
@@ -32,3 +33,17 @@ sources:
             description: ODRE dataset the row was loaded from.
           - name: _ingested_at
             description: Time of the load that wrote the row (UTC).
+      - name: eco2mix_national_realtime
+        description: >
+          RTE national real-time data (dataset eco2mix-national-tr), from
+          September 1st, 2026: one row per version of a quarter hour, appended
+          by the streaming writer from Kafka (docs/adr/010-ecriture-flux-iceberg.md).
+          Realised values every 15 minutes. The latest version of a quarter hour
+          has the most recent _source_updated_at, then the highest _kafka_offset.
+        columns:
+          - name: date_heure
+            description: Timestamp in UTC. Not unique here (one row per version).
+          - name: _source_updated_at
+            description: Refresh time of the dataset when the producer read the row (UTC).
+          - name: _kafka_offset
+            description: Offset of the Kafka message the row comes from.

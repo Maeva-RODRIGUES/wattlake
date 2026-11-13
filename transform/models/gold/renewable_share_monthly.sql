@@ -5,9 +5,11 @@ with monthly as (
 
     select
         date_trunc('month', local_date) as month,
-        sum(expected_half_hours) as expected_half_hours,
-        sum(half_hours_with_data) as half_hours_with_data,
-        sum(half_hours_with_detail) as half_hours_with_detail,
+        sum(expected_hours) as expected_hours,
+        sum(hours_with_data) as hours_with_data,
+        sum(hours_with_detail) as hours_with_detail,
+        -- The current month: its last day is not over yet.
+        bool_or(is_partial) as is_partial,
         sum(consumption_mwh) as consumption_mwh,
         sum(production_mwh) as production_mwh,
         sum(renewable_mwh) as renewable_mwh,
@@ -25,10 +27,11 @@ with monthly as (
 
 select
     month,
-    expected_half_hours,
-    half_hours_with_data,
-    half_hours_with_detail,
-    half_hours_with_data = expected_half_hours as is_complete,
+    expected_hours,
+    hours_with_data,
+    hours_with_detail,
+    hours_with_data = expected_hours as is_complete,
+    is_partial,
     consumption_mwh,
     production_mwh,
     renewable_mwh,

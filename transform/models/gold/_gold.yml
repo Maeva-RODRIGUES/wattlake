@@ -2,9 +2,10 @@ version: 2
 
 # Share of renewables in the French production mix.
 #
-# 1. Energy, not power. Silver *_mw columns are average powers over 30 minutes
-#    (RTE specification, see silver _silver.yml). Each half hour contributes
-#    power * 0.5 h of energy, and energies in MWh are summed over the period.
+# 1. Energy, not power. Silver *_mw columns are average powers over each row's
+#    time step, step_hours (RTE specification, see silver _silver.yml): 0.5 h
+#    for the history, 0.25 h for the real-time data. Each row contributes
+#    power * step_hours of energy, and energies in MWh are summed over the period.
 #
 # 2. Ratio of sums, not average of shares. A share over a period is
 #        sum(renewable energy) / sum(production energy)
@@ -55,16 +56,22 @@ version: 2
 #
 # 6. Incomplete days. The source omits the first of the two repeated hours at
 #    the autumn clock change (docs/sources.md, quirk 8): every last Sunday of
-#    October has 48 half hours instead of 50, and is_complete is false. The
-#    other incomplete day is 2026-01-01, whose first half hour is missing.
-#    Shares stay valid ratios over the half hours present.
+#    October has 24 hours of data instead of 25, and is_complete is false, in
+#    the history as in the real-time data. The other incomplete day is
+#    2026-01-01, whose first half hour is missing. Shares stay valid ratios over
+#    the steps present.
+#
+# 7. Partial day and month. The real-time data covers the current day only up
+#    to its latest quarter hour: is_partial is true for it, and for the current
+#    month. Their totals grow with each run until the day is over.
 
 models:
   - name: energy_mix_daily
     description: >
       Daily energy mix of France in MWh, one row per day in Paris time
       (local_date), with the share of renewables in production for the day.
-      Built from the half-hour rows of silver eco2mix_national.
+      Built from the rows of silver eco2mix_national: history half hours until
+      2026-08-31, then real-time quarter hours.
     data_tests:
       # No missing day between the first and the last one.
       - dbt_utils.sequential_values:
@@ -92,25 +99,30 @@ models:
         data_tests:
           - unique
           - not_null
-      - name: expected_half_hours
-        description: Half hours in the day, 46 on the spring clock-change day, 50 in autumn, 48 otherwise.
+      - name: expected_hours
+        description: Hours in the day, 23 on the spring clock-change day, 25 in autumn, 24 otherwise.
         data_tests:
           - accepted_values:
               arguments:
-                values: [46, 48, 50]
+                values: [23, 24, 25]
                 quote: false
-      - name: half_hours_with_data
-        description: Half hours with a known production for all eight sources.
-      - name: half_hours_with_detail
-        description: Half hours with the technology detail needed by the strict definition. 0 in 2012.
+      - name: hours_with_data
+        description: Hours covered by steps with a known production for all eight sources (sum of their step_hours).
+      - name: hours_with_detail
+        description: Hours covered by steps with the technology detail needed by the strict definition. 0 in 2012.
       - name: is_complete
         description: >
-          True when every half hour of the day has data. False on every autumn
-          clock-change day (the source omits one of the repeated hours) and on
-          2026-01-01, whose first half hour is missing at the source.
+          True when the steps with data cover the whole day. False on every
+          autumn clock-change day (the source omits one of the repeated hours),
+          on 2026-01-01, whose first half hour is missing at the source, and on
+          the current day.
+      - name: is_partial
+        description: True for the current day in Paris time, which the real-time data covers only up to its latest quarter hour.
+        data_tests:
+          - not_null
       - name: consumption_mwh
         description: Realised consumption, MWh.
-        meta: &mwh {unit: MWh, quantity: energy, computed_as: "sum(power_mw * 0.5)"}
+        meta: &mwh {unit: MWh, quantity: energy, computed_as: "sum(power_mw * step_hours)"}
       - name: production_mwh
         description: Total production of the eight sources (nuclear, wind, solar, hydro, bioenergy, gas, coal, fuel oil), MWh. Excludes pumping.
         meta: *mwh
@@ -154,7 +166,7 @@ models:
         description: Strict renewables (SDES conventions), MWh. NULL in 2012, when the technology detail is unknown.
         meta: *mwh
       - name: production_with_detail_mwh
-        description: Production over the half hours with technology detail, denominator of the strict share. NULL in 2012.
+        description: Production over the steps with technology detail, denominator of the strict share. NULL in 2012.
         meta: *mwh
       - name: renewable_share
         description: renewable_mwh / production_mwh, between 0 and 1. A ratio of energies, not an average of shares.
@@ -187,14 +199,16 @@ models:
         data_tests:
           - unique
           - not_null
-      - name: expected_half_hours
-        description: Half hours in the month.
-      - name: half_hours_with_data
-        description: Half hours with a known production for all eight sources.
-      - name: half_hours_with_detail
-        description: Half hours with technology detail. 0 in 2012.
+      - name: expected_hours
+        description: Hours in the month.
+      - name: hours_with_data
+        description: Hours covered by steps with a known production for all eight sources.
+      - name: hours_with_detail
+        description: Hours covered by steps with technology detail. 0 in 2012.
       - name: is_complete
-        description: True when every half hour of the month has data.
+        description: True when the steps with data cover the whole month.
+      - name: is_partial
+        description: True for the current month, whose last day is not over yet.
       - name: consumption_mwh
         description: Realised consumption, MWh.
         meta: *mwh
@@ -220,7 +234,7 @@ models:
         description: Strict renewables (SDES conventions), MWh. NULL in 2012.
         meta: *mwh
       - name: production_with_detail_mwh
-        description: Production over the half hours with technology detail, MWh. NULL in 2012.
+        description: Production over the steps with technology detail, MWh. NULL in 2012.
         meta: *mwh
       - name: renewable_share
         description: Broad share, ratio of the monthly energy sums.
@@ -241,14 +255,20 @@ unit_tests:
       2012, so the strict share is NULL. Day 2013-06-01: hydro 200 MW including
       50 MW of pumped storage, bioenergy 100 MW including 40 MW of waste, wind
       100 MW. Strict renewables = 100 + 150 + 80 = 330 MW out of 400 MW: 0.825.
+      Day 2026-10-01, real-time data: two quarter hours of 400 MW nuclear and
+      400 MW wind cover 0.25 h each, so 2 * 800 * 0.25 = 400 MWh and 0.5 hour
+      with data.
     model: energy_mix_daily
     given:
       - input: ref('eco2mix_national')
         rows:
-          - {timestamp_utc: "2012-06-01 10:00:00 UTC", local_date: "2012-06-01", nuclear_mw: 300, wind_mw: 100, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0}
-          - {timestamp_utc: "2012-06-01 10:30:00 UTC", local_date: "2012-06-01", nuclear_mw: 100, wind_mw: 500, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0}
-          - {timestamp_utc: "2013-06-01 10:00:00 UTC", local_date: "2013-06-01", nuclear_mw: 0, wind_mw: 100, solar_mw: 0, hydro_mw: 200, bioenergy_mw: 100, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, hydro_pumped_storage_generation_mw: 50, bioenergy_waste_mw: 40}
+          - {timestamp_utc: "2012-06-01 10:00:00 UTC", local_date: "2012-06-01", step_hours: 0.5, nuclear_mw: 300, wind_mw: 100, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0}
+          - {timestamp_utc: "2012-06-01 10:30:00 UTC", local_date: "2012-06-01", step_hours: 0.5, nuclear_mw: 100, wind_mw: 500, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0}
+          - {timestamp_utc: "2013-06-01 10:00:00 UTC", local_date: "2013-06-01", step_hours: 0.5, nuclear_mw: 0, wind_mw: 100, solar_mw: 0, hydro_mw: 200, bioenergy_mw: 100, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, hydro_pumped_storage_generation_mw: 50, bioenergy_waste_mw: 40}
+          - {timestamp_utc: "2026-10-01 10:00:00 UTC", local_date: "2026-10-01", step_hours: 0.25, nuclear_mw: 400, wind_mw: 400, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, hydro_pumped_storage_generation_mw: 0, bioenergy_waste_mw: 0}
+          - {timestamp_utc: "2026-10-01 10:15:00 UTC", local_date: "2026-10-01", step_hours: 0.25, nuclear_mw: 400, wind_mw: 400, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, hydro_pumped_storage_generation_mw: 0, bioenergy_waste_mw: 0}
     expect:
       rows:
-        - {local_date: "2012-06-01", production_mwh: 500, renewable_mwh: 300, renewable_share: 0.6, renewable_share_strict: null}
-        - {local_date: "2013-06-01", production_mwh: 200, renewable_mwh: 200, renewable_share: 1, renewable_share_strict: 0.825}
+        - {local_date: "2012-06-01", hours_with_data: 1, production_mwh: 500, renewable_mwh: 300, renewable_share: 0.6, renewable_share_strict: null}
+        - {local_date: "2013-06-01", hours_with_data: 0.5, production_mwh: 200, renewable_mwh: 200, renewable_share: 1, renewable_share_strict: 0.825}
+        - {local_date: "2026-10-01", hours_with_data: 0.5, production_mwh: 400, renewable_mwh: 200, renewable_share: 0.5, renewable_share_strict: 0.5}

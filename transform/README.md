@@ -48,9 +48,13 @@ Depuis dbt 1.8, dbt-core et les adaptateurs sont publiés séparément et commun
 
 ## Couche silver
 
-Le modèle [models/silver/eco2mix_national.sql](models/silver/eco2mix_national.sql) produit `iceberg.silver.eco2mix_national` : une ligne par quart d'heure, typée et dédoublonnée.
+Le modèle [models/silver/eco2mix_national.sql](models/silver/eco2mix_national.sql) produit `iceberg.silver.eco2mix_national` : une ligne par quart d'heure, typée et dédoublonnée, à partir de deux tables bronze ([ADR 012](../docs/adr/012-temps-reel-silver-gold.md)) :
 
-- **Dédoublonnage** : une ligne n'est gardée que si son heure locale (`heure`) correspond à `date_heure` en heure de Paris. La règle écarte exactement les 60 lignes artificielles du passage à l'heure d'été, et `timestamp_utc` devient unique.
+- **l'historique** (`eco2mix_national_history`), données consolidées et définitives, de 2012 au 31 août 2026 ;
+- **le temps réel** (`eco2mix_national_realtime`), écrit par le flux Kafka, réduit à la dernière version de chaque quart d'heure (`_source_updated_at` le plus récent, puis `_kafka_offset`). Un quart d'heure présent dans l'historique écarte sa version temps réel : les données consolidées remplacent le temps réel quand RTE les publie.
+
+- **Dédoublonnage** : une ligne n'est gardée que si son heure locale (`heure`) correspond à `date_heure` en heure de Paris. La règle écarte exactement les 60 lignes artificielles du passage à l'heure d'été, et `timestamp_utc` devient unique. Elle s'applique aussi au temps réel, qui n'a pas de telles lignes aujourd'hui.
+- **Pas de temps** : la colonne `step_hours` donne la durée couverte par les valeurs réalisées d'une ligne : 0,5 h pour l'historique, 0,25 h pour le temps réel.
 - **Typage** : `ND` (« non disponible ») devient `NULL`, puis les nombres publiés en texte sont convertis en entier. Une autre valeur non numérique fait échouer le modèle. `date` et `heure` sont remplacées par `local_date`, de type `date`.
 - **Noms en anglais, avec l'unité** (`consumption_mw`, `co2_intensity_g_per_kwh`…). Le nom d'origine de chaque colonne est dans son `meta.source_field`.
 - **Matérialisation** : table reconstruite en entier à chaque exécution, avec `on_table_exists: replace`. Un modèle incrémental ne se justifie pas pour environ 500 000 lignes.
@@ -59,20 +63,21 @@ Le modèle [models/silver/eco2mix_national.sql](models/silver/eco2mix_national.s
 
 | Colonnes | Pas | Énergie (MWh) |
 | --- | --- | --- |
-| Consommation, filières, pompage, échanges physiques | 30 min (lignes :00 et :30) | valeur × 0,5 |
-| Détail par technologie | 30 min, à partir de 2013 | valeur × 0,5 |
+| Consommation, filières, pompage, échanges physiques | 30 min (lignes :00 et :30) dans l'historique, 15 min dans le temps réel | valeur × `step_hours` |
+| Détail par technologie | idem, à partir de 2013 | valeur × `step_hours` |
+| Éolien terrestre et en mer, charge et décharge des batteries | 15 min, temps réel seulement (à partir du 2026-09-01) | valeur × `step_hours` |
 | Prévisions de consommation | 15 min | valeur × 0,25 |
 | Échanges commerciaux | 30 min, puis 15 min à partir du 2024-06-26 22:00 UTC | valeur × 0,5, puis × 0,25 |
 | `co2_intensity_g_per_kwh` | 30 min | Pas une puissance : moyenne pondérée par l'énergie produite |
 
-Deux hypothèses, que la spécification de RTE ne tranche pas : `timestamp_utc` marque le début de l'intervalle, et les échanges commerciaux sont des puissances moyennes, comme la production et la consommation.
+Trois hypothèses, que la spécification de RTE ne tranche pas : `timestamp_utc` marque le début de l'intervalle, les échanges commerciaux sont des puissances moyennes, comme la production et la consommation, et les valeurs temps réel sont des puissances moyennes sur le quart d'heure, comme les valeurs consolidées.
 
 ## Couche gold
 
 Deux tables dans `iceberg.gold`, documentées dans [models/gold/_gold.yml](models/gold/_gold.yml) :
 
-- **`energy_mix_daily`** : une ligne par jour en heure de Paris, avec l'énergie en MWh de chaque filière (puissance × 0,5 h sur les demi-heures), la production totale des huit filières sans le pompage, et les parts de renouvelables. Elle indique aussi la complétude du jour : 46, 48 ou 50 demi-heures attendues selon les changements d'heure, et `is_complete`.
-- **`renewable_share_monthly`** : une ligne par mois, avec les sommes des énergies quotidiennes et les parts recalculées à partir de ces sommes.
+- **`energy_mix_daily`** : une ligne par jour en heure de Paris, avec l'énergie en MWh de chaque filière (puissance × `step_hours`), la production totale des huit filières sans le pompage, et les parts de renouvelables. Elle indique aussi la complétude du jour : 23, 24 ou 25 heures attendues selon les changements d'heure (`expected_hours`), les heures couvertes (`hours_with_data`), `is_complete`, et `is_partial` pour le jour en cours, que le temps réel ne couvre que jusqu'au dernier quart d'heure publié.
+- **`renewable_share_monthly`** : une ligne par mois, avec les sommes des énergies quotidiennes et les parts recalculées à partir de ces sommes. `is_partial` signale le mois en cours.
 
 Points de conception :
 
@@ -87,13 +92,13 @@ Contrôle croisé avec le Bilan électrique 2024 de RTE (chiffres provisionnels)
 `make dbt ARGS="build"` construit chaque modèle puis lance ses tests : un test en échec arrête les modèles qui en dépendent.
 
 - **Paquet `dbt_utils` 1.4.1**, déclaré dans [packages.yml](packages.yml) et figé dans [package-lock.yml](package-lock.yml). Il s'installe avec `make dbt ARGS="deps"`, dans `dbt_packages/` (ignoré par Git). À l'étape 3.5, il faudra l'installer au moment de construire l'image, pas à chaque exécution.
-- **Tests de données** (37), dans `_silver.yml` et `_gold.yml`, tous en sévérité `error`. Chaque seuil vient d'une mesure sur les données, rappelée en commentaire : pompage toujours ≤ 0, production ≥ 0 sauf solaire, charbon et turbinage des STEP (≥ -200 MW, consommations auxiliaires jusqu'en 2020), consommation entre 20 000 et 120 000 MW, intensité CO₂ entre 0 et 500 g/kWh, parts entre 0 et 1, part stricte ≤ part large et nulle exactement avant 2013, aucun jour manquant, production égale à la somme des huit filières.
-- **Tests SQL dédiés**, dans [tests/](tests/) : les journées incomplètes se limitent aux cas connus, et les sommes mensuelles égalent celles des jours.
-- **Tests unitaires** (2) : le SQL des modèles exécuté sur des lignes simulées, sans lire les tables. L'un vérifie qu'une ligne artificielle de mars est écartée et que `ND` devient `NULL`, l'autre que les parts sont des ratios de sommes (0,6 et non la moyenne 0,54) et que la part stricte vaut `NULL` sans détail par technologie. Pour vérifier qu'ils détectent une régression, on a retiré le filtre de dédoublonnage, puis forcé la part stricte inconnue à 0 : chaque erreur a fait échouer le test prévu.
+- **Tests de données** (44), dans `_silver.yml` et `_gold.yml`, tous en sévérité `error`. Chaque seuil vient d'une mesure sur les données, rappelée en commentaire : pompage et charge des batteries toujours ≤ 0, production ≥ 0 sauf solaire, charbon et turbinage des STEP (≥ -200 MW, consommations auxiliaires jusqu'en 2020), consommation entre 20 000 et 120 000 MW, intensité CO₂ entre 0 et 500 g/kWh, parts entre 0 et 1, part stricte ≤ part large et nulle exactement avant 2013, aucun jour manquant, production égale à la somme des huit filières.
+- **Tests SQL dédiés**, dans [tests/](tests/) : les journées incomplètes se limitent aux cas connus (le jour en cours compris), et les sommes mensuelles égalent celles des jours.
+- **Tests unitaires** (3) : le SQL des modèles exécuté sur des lignes simulées, sans lire les tables. Le premier vérifie qu'une ligne artificielle de mars est écartée et que `ND` devient `NULL`. Le deuxième, que la dernière version temps réel d'un quart d'heure est gardée et que l'historique l'emporte sur le temps réel. Le troisième, que les parts sont des ratios de sommes (0,6 et non la moyenne 0,54), que la part stricte vaut `NULL` sans détail par technologie, et qu'un quart d'heure temps réel compte pour 0,25 h. Pour vérifier qu'ils détectent une régression, on a retiré le filtre de dédoublonnage, puis forcé la part stricte inconnue à 0 : chaque erreur a fait échouer le test prévu.
 
 Non testé volontairement : l'égalité entre une filière et la somme de ses technologies, que la source ne respecte pas (particularité 9 de [docs/sources.md](../docs/sources.md)).
 
-Journées incomplètes : chaque dimanche de passage à l'heure d'hiver (la source omet l'une des deux heures répétées, voir la particularité 8 de [docs/sources.md](../docs/sources.md)) et le 1er janvier 2026.
+Journées incomplètes : chaque dimanche de passage à l'heure d'hiver (l'historique comme le temps réel omettent l'une des deux heures répétées, voir la particularité 8 de [docs/sources.md](../docs/sources.md)), le 1er janvier 2026, et le jour en cours. Si le flux temps réel s'arrête, la veille devient incomplète : le test échoue et le build n'est pas publié.
 
 ## Dépendances : pourquoi `requirements.in` et `uv pip compile`
 

@@ -57,11 +57,12 @@ flowchart LR
     API -->|temps réel,<br/>toutes les 5 min| PR[Producteur]
     PR -->|JSON, clé = quart d'heure| K[Kafka<br/>topic compacté]
     K -->|writer PyIceberg,<br/>lots de 5 min| RT[(bronze<br/>temps réel)]
+    RT -->|dernière version<br/>de chaque quart d'heure| DBT
     NES --- RT
     S3 --- RT
 ```
 
-Les tables sont au format Iceberg, dans le catalogue Nessie et sur SeaweedFS. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt : il reconstruit silver et gold sur une branche Nessie, lance les tests, et ne fusionne dans `main` que s'ils passent (ADR 008). En parallèle, un producteur publie les mesures temps réel dans Kafka, et un writer les ajoute à une table bronze Iceberg, exactement une fois, en un commit toutes les 5 minutes au plus (ADR 009 et 010).
+Les tables sont au format Iceberg, dans le catalogue Nessie et sur SeaweedFS. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt : il reconstruit silver et gold sur une branche Nessie, lance les tests, et ne fusionne dans `main` que s'ils passent (ADR 008). En parallèle, un producteur publie les mesures temps réel dans Kafka, et un writer les ajoute à une table bronze Iceberg, exactement une fois, en un commit toutes les 5 minutes au plus (ADR 009 et 010). Silver réunit l'historique et la dernière version de chaque quart d'heure temps réel, l'historique restant prioritaire, et gold calcule les énergies selon le pas de temps de chaque source, jusqu'au jour en cours (ADR 012).
 
 ### Plateforme
 
@@ -299,10 +300,10 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 009 : producteur temps réel vers Kafka](docs/adr/009-producteur-temps-reel.md), ou pourquoi un `Deployment` dédié plutôt qu'une tâche Airflow, du JSON plutôt qu'Avro, et un curseur lu dans Kafka avec un topic compacté.
 - [ADR 010 : écriture du flux temps réel dans Iceberg](docs/adr/010-ecriture-flux-iceberg.md), ou pourquoi un consommateur PyIceberg plutôt que Kafka Connect, Spark ou Flink, une table en ajout seul, et des offsets stockés dans les snapshots Iceberg pour écrire exactement une fois.
 - [ADR 011 : supervision de la stack](docs/adr/011-supervision.md), ou pourquoi `kube-prometheus-stack` et ses `ServiceMonitor`, Loki en mode `SingleBinary` et Alloy plutôt qu'Elasticsearch.
+- [ADR 012 : raccordement du temps réel aux couches silver et gold](docs/adr/012-temps-reel-silver-gold.md), ou pourquoi une seule table silver avec l'historique prioritaire, et des énergies calculées selon le pas de temps de chaque ligne.
 
 ## Limites et suites possibles
 
-- **Le temps réel s'arrête à bronze.** La table `bronze.eco2mix_national_realtime` n'alimente pas encore silver et gold : il faudrait un modèle dbt qui garde la dernière version de chaque quart d'heure et la raccorde à l'historique consolidé.
 - **Pas de maintenance des tables Iceberg.** Le writer fait une centaine de commits par jour : il faudrait compacter les petits fichiers et nettoyer ceux que plus aucun commit Nessie ne référence (GC de Nessie, voir l'ADR 010).
 - **Pas d'alertes.** Alertmanager est désactivé : le retard du writer et les échecs de DAG se lisent dans Grafana, sans notification (ADR 011).
 - **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS : `make cluster-dns-check` le détecte, `make cluster-restart` le corrige (voir [infra/README.md](infra/README.md)).
