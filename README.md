@@ -302,10 +302,11 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 010 : écriture du flux temps réel dans Iceberg](docs/adr/010-ecriture-flux-iceberg.md), ou pourquoi un consommateur PyIceberg plutôt que Kafka Connect, Spark ou Flink, une table en ajout seul, et des offsets stockés dans les snapshots Iceberg pour écrire exactement une fois.
 - [ADR 011 : supervision de la stack](docs/adr/011-supervision.md), ou pourquoi `kube-prometheus-stack` et ses `ServiceMonitor`, Loki en mode `SingleBinary` et Alloy plutôt qu'Elasticsearch.
 - [ADR 012 : raccordement du temps réel aux couches silver et gold](docs/adr/012-temps-reel-silver-gold.md), ou pourquoi une seule table silver avec l'historique prioritaire, et des énergies calculées selon le pas de temps de chaque ligne.
+- [ADR 013 : maintenance des tables Iceberg](docs/adr/013-maintenance-iceberg.md), ou pourquoi l'`optimize` de Trino pour le compactage et Nessie GC plutôt que `expire_snapshots` pour le nettoyage, avec 7 jours de rétention.
 
 ## Limites et suites possibles
 
-- **Pas de maintenance des tables Iceberg.** Le writer fait une centaine de commits par jour, et le DAG dbt réécrit silver et gold toutes les heures (environ 340 Mo de fichiers par jour) : il faudrait compacter les petits fichiers et nettoyer ceux que plus aucun commit Nessie ne référence (GC de Nessie, voir les ADR 010 et 012).
+- **Pas encore de nettoyage des anciens fichiers.** Le DAG `iceberg_maintenance` compacte chaque nuit les tables bronze (ADR 013), mais le DAG dbt réécrit silver et gold toutes les heures (environ 340 Mo de fichiers par jour) : il faut supprimer les fichiers que plus aucun commit Nessie ne référence (GC de Nessie, étape suivante).
 - **Pas d'alertes.** Alertmanager est désactivé : le retard du writer et les échecs de DAG se lisent dans Grafana, sans notification (ADR 011).
 - **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS : `make cluster-dns-check` le détecte, `make cluster-restart` le corrige (voir [infra/README.md](infra/README.md)).
 

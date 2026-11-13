@@ -84,6 +84,7 @@ Points de conception :
 - **Ratio de sommes, pas moyenne de parts** : une part sur une période vaut somme des énergies renouvelables / somme de la production, ce qui pondère chaque pas de temps par son énergie. Sur 2024, la moyenne des parts quotidiennes surestime la part de 0,12 point (0,2928 contre 0,2916).
 - **Deux définitions** : `renewable_share`, au sens large (éolien, solaire, hydraulique, bioénergies), et `renewable_share_strict`, selon les conventions du SDES (sans le turbinage des STEP, avec 50 % des déchets). La part stricte vaut `NULL` en 2012, et non 0, car le détail par technologie n'est publié qu'à partir de 2013.
 - **Schéma `gold`** : la macro [macros/generate_schema_name.sql](macros/generate_schema_name.sql) utilise le nom de schéma tel quel. Sans elle, dbt aurait créé `silver_gold`.
+- **Compactage de bronze** : la macro [macros/optimize_bronze_tables.sql](macros/optimize_bronze_tables.sql) lance `optimize` sur les deux tables bronze. Le DAG Airflow `iceberg_maintenance` l'exécute chaque nuit (`dbt run-operation optimize_bronze_tables --target dev`, voir l'[ADR 013](../docs/adr/013-maintenance-iceberg.md)).
 
 Contrôle croisé avec le Bilan électrique 2024 de RTE (chiffres provisionnels) : production 537,6 TWh contre 536,5, renouvelables au sens strict 148,0 TWh contre 148, éolien 46,8 contre 46,6. Le solaire (24,5 TWh contre 23,3) reste un écart de 5 % non expliqué.
 
