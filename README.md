@@ -122,6 +122,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 - [x] Flux temps réel : API, Kafka, Iceberg (ADR 009 et 010)
 - [x] Métriques et logs des traitements : Prometheus, Grafana, Loki (ADR 011)
 - [x] Temps réel raccordé à silver et gold, rafraîchis toutes les heures (ADR 012)
+- [x] Maintenance des tables Iceberg : compactage et nettoyage par Nessie GC, chaque nuit (ADR 013)
 
 ## Démarrer
 
@@ -306,7 +307,6 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 
 ## Limites et suites possibles
 
-- **Pas encore de nettoyage des anciens fichiers.** Le DAG `iceberg_maintenance` compacte chaque nuit les tables bronze (ADR 013), mais le DAG dbt réécrit silver et gold toutes les heures (environ 340 Mo de fichiers par jour) : il faut supprimer les fichiers que plus aucun commit Nessie ne référence (GC de Nessie, étape suivante).
 - **Pas d'alertes.** Alertmanager est désactivé : le retard du writer et les échecs de DAG se lisent dans Grafana, sans notification (ADR 011).
 - **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS : `make cluster-dns-check` le détecte, `make cluster-restart` le corrige (voir [infra/README.md](infra/README.md)).
 

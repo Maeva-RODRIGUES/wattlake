@@ -53,7 +53,7 @@ Ce que permet la stack, vérifié dans le code et la documentation des versions 
 
 Le compactage ne passe pas par le Write-Audit-Publish : il ne change pas le contenu des tables, seulement leur découpage en fichiers. Si le compactage et le writer commitent la même table au même moment, Nessie en accepte un et rejette l'autre. Le compactage recommence (deux nouvelles tentatives), ou le writer redémarre et retrouve ses offsets dans les données (ADR 010).
 
-**Nettoyage (étape 8.2)** : un `CronJob` lance chaque nuit Nessie GC 0.109.0 (`gc --inmemory --default-cutoff P7D`), après le compactage. Il garde 7 jours d'historique sur toutes les branches, et supprime les fichiers Iceberg qui ne servent plus à aucun commit gardé. Il utilise sa propre identité S3, `nessie-gc` (ADR 006), la seule à supprimer des fichiers en masse.
+**Nettoyage (étape 8.2)** : un `CronJob` lance chaque nuit, à 04:00 UTC, Nessie GC 0.109.0 (`gc --inmemory --default-cutoff P7D`), après le compactage. Il garde 7 jours d'historique sur toutes les branches, et supprime les fichiers Iceberg qui ne servent plus à aucun commit gardé. Il utilise sa propre identité S3, `nessie-gc` (ADR 006), la seule à supprimer des fichiers en masse, passée par les variables d'environnement `AWS_*` plutôt que dans l'option `--iceberg`, qui l'aurait mise sur la ligne de commande.
 
 ## Conséquences
 

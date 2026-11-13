@@ -1,0 +1,23 @@
+# Argo CD Application for Nessie GC, the nightly cleanup of unreferenced
+# Iceberg files (docs/adr/013-maintenance-iceberg.md). Synced automatically from the main branch.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nessie-gc
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: wattlake
+  # Kustomize directory: the manifests of infra/nessie-gc.
+  source:
+    repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+    targetRevision: main
+    path: infra/nessie-gc
+  # Automated sync: the cluster follows the main branch. prune deletes what is
+  # removed from Git, selfHeal reverts changes made by hand in the cluster.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

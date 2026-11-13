@@ -1,0 +1,81 @@
+# Nessie GC (docs/adr/013-maintenance-iceberg.md): every night, deletes the
+# Iceberg files that no Nessie commit of the last 7 days references, on every
+# branch. Runs after the bronze compaction of the iceberg_maintenance DAG (02:30).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nessie-gc
+  labels:
+    app.kubernetes.io/name: nessie-gc
+spec:
+  schedule: "0 4 * * *"
+  timeZone: UTC
+  # Never two collections at once, and no catch-up of missed nights.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: nessie-gc
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            # uid of the "nessie" user of the image is not numeric in its
+            # config: a numeric uid lets Kubernetes check runAsNonRoot.
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: nessie-gc
+              # 0.109.0, the version of the Nessie server (infra/argocd/apps/nessie.yaml),
+              # built 2026-10-08; digest of the multi-architecture index.
+              image: ghcr.io/projectnessie/nessie-gc:0.109.0@sha256:246f334b9900c512ebc779016f6dc08220ee8fa5ab528d559b2022f38434b12c
+              # The image's entrypoint is "java -jar /nessie-gc.jar".
+              args:
+                # Mark the live content, then delete the files nothing references.
+                - gc
+                # Live-content set kept in memory: no database (ADR 013).
+                - --inmemory
+                - --uri=http://nessie:19120/api/v2
+                # Every commit of the last 7 days is live, on every branch.
+                - --default-cutoff=P7D
+                # FileIO of the object store. The keys come from the
+                # environment (AWS_*), not from the command line.
+                - --iceberg=s3.endpoint=http://seaweedfs-s3:8333,s3.path-style-access=true,client.region=us-east-1
+              env:
+                # Keys of the "nessie-gc" SeaweedFS identity, from a Secret
+                # created by "make secrets" (docs/adr/006-gestion-des-secrets.md).
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: nessie-gc-credentials
+                      key: s3-access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: nessie-gc-credentials
+                      key: s3-secret-access-key
+                - name: AWS_REGION
+                  value: us-east-1
+                # Heap sized from the container limit.
+                - name: JAVA_TOOL_OPTIONS
+                  value: -XX:MaxRAMPercentage=75
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 512Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi

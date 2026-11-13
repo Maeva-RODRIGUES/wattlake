@@ -17,6 +17,8 @@
 #      and as an identity added to the SeaweedFS configuration of group 1
 #      (by add_s3_identity.py), so that it can be added to an existing cluster.
 #   4. monitoring: the Grafana admin credentials, in the "monitoring" namespace.
+#   5. nessie-gc: the S3 key pair of Nessie GC, the only identity that deletes
+#      files in bulk (docs/adr/013-maintenance-iceberg.md), added like group 3.
 #
 # Usage: make secrets
 set -euo pipefail
@@ -27,6 +29,7 @@ MONITORING_NAMESPACE="monitoring"
 STACK_SECRETS=(seaweedfs-s3-config nessie-credentials trino-credentials postgres-credentials airflow-credentials)
 NESSIE_DB_SECRETS=(nessie-db-credentials)
 STREAMING_SECRETS=(streaming-credentials)
+NESSIE_GC_SECRETS=(nessie-gc-credentials)
 MONITORING_SECRETS=(grafana-admin)
 LABEL="app.kubernetes.io/part-of=wattlake"
 
@@ -72,6 +75,7 @@ group_action() {
 stack_action=$(group_action stack "$NAMESPACE" "${STACK_SECRETS[@]}")
 nessie_db_action=$(group_action nessie-db "$NAMESPACE" "${NESSIE_DB_SECRETS[@]}")
 streaming_action=$(group_action streaming "$NAMESPACE" "${STREAMING_SECRETS[@]}")
+nessie_gc_action=$(group_action nessie-gc "$NAMESPACE" "${NESSIE_GC_SECRETS[@]}")
 monitoring_action=$(group_action monitoring "$MONITORING_NAMESPACE" "${MONITORING_SECRETS[@]}")
 
 ensure_namespace "$NAMESPACE"
@@ -182,7 +186,12 @@ stringData:
 EOF
 }
 
-create_streaming() {
+# An S3 identity of its own for one component: a key pair, both in the
+# component's Secret and as an identity added to the SeaweedFS configuration of
+# group 1, so that it can be added to an existing cluster.
+# Usage: create_s3_identity <identity> <secret-name>
+create_s3_identity() {
+local identity="$1" secret_name="$2"
 local access secret
 access=$(hex 10) secret=$(hex 20)
 # First the SeaweedFS identity (created by group 1, just before): the keys go
@@ -192,14 +201,14 @@ local config
 # Command substitution, not a pipe from kubectl (see group_action).
 config=$(kubectl_ns get secret seaweedfs-s3-config --output json)
 printf '%s' "$config" \
-    | S3_IDENTITY=streaming S3_ACCESS="$access" S3_SECRET="$secret" python3 "$(dirname "$0")/add_s3_identity.py" \
+    | S3_IDENTITY="$identity" S3_ACCESS="$access" S3_SECRET="$secret" python3 "$(dirname "$0")/add_s3_identity.py" \
     | kubectl_ns replace --filename -
 
 cat <<EOF | kubectl_ns create --filename -
 apiVersion: v1
 kind: Secret
 metadata:
-  name: streaming-credentials
+  name: ${secret_name}
   labels: {app.kubernetes.io/part-of: wattlake}
 type: Opaque
 stringData:
@@ -209,9 +218,17 @@ EOF
 
 # SeaweedFS reads its S3 identities at startup only (see infra/seaweedfs/values.yaml).
 if [ "$stack_action" = "skip" ]; then
-    echo "SeaweedFS identity added: restart the filer to load it:"
+    echo "SeaweedFS identity ${identity} added: restart the filer to load it:"
     echo "  kubectl --context $CONTEXT --namespace $NAMESPACE rollout restart statefulset/seaweedfs-filer"
 fi
+}
+
+create_streaming() {
+create_s3_identity streaming streaming-credentials
+}
+
+create_nessie_gc() {
+create_s3_identity nessie-gc nessie-gc-credentials
 }
 
 create_monitoring() {
@@ -231,8 +248,8 @@ stringData:
 EOF
 }
 
-# stack first: the streaming group adds an identity to its SeaweedFS configuration.
-for group in stack nessie_db streaming monitoring; do
+# stack first: the streaming and nessie-gc groups add an identity to its SeaweedFS configuration.
+for group in stack nessie_db streaming monitoring nessie_gc; do
     action_var="${group}_action"
     if [ "${!action_var}" = "create" ]; then
         "create_${group}"

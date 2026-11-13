@@ -1,6 +1,6 @@
 # infra
 
-Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi, supervision : `monitoring/`, `loki/`, `alloy/`), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), flux temps réel, producteur et writer (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
+Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi, supervision : `monitoring/`, `loki/`, `alloy/`), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), nettoyage nocturne par Nessie GC (`nessie-gc/`, kustomize), flux temps réel, producteur et writer (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
 
 ## GitOps avec Argo CD
 
@@ -34,14 +34,15 @@ Le chart Airflow demande, avec Argo CD, `useHelmHooks: false` et `applyCustomEnv
 
 ## Secrets
 
-Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée huit Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials`, `airflow-credentials`, `nessie-db-credentials` et `streaming-credentials` dans le namespace `wattlake`, et `grafana-admin` dans le namespace `monitoring`. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
+Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée neuf Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials`, `airflow-credentials`, `nessie-db-credentials`, `streaming-credentials` et `nessie-gc-credentials` dans le namespace `wattlake`, et `grafana-admin` dans le namespace `monitoring`. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
 
-- **Une identité S3 par composant** : Nessie, Trino, Airflow et le writer temps réel (`streaming`) ont chacun leurs clés, limitées à la lecture, l'écriture et la liste du bucket `warehouse`. L'identité `admin`, utilisée par aucun composant, sert à l'exploitation.
-- **Par groupes, en tout ou rien** : des Secrets qui partagent des valeurs forment un groupe (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Un groupe est créé en entier ou pas du tout : le script ne remplace jamais un Secret existant, et s'arrête si seuls certains Secrets d'un groupe existent. Un groupe ajouté plus tard se crée sur un cluster existant sans toucher aux autres. Quatre groupes :
+- **Une identité S3 par composant** : Nessie, Trino, Airflow, le writer temps réel (`streaming`) et le nettoyage (`nessie-gc`) ont chacun leurs clés, limitées à la lecture, l'écriture et la liste du bucket `warehouse`. L'identité `admin`, utilisée par aucun composant, sert à l'exploitation.
+- **Par groupes, en tout ou rien** : des Secrets qui partagent des valeurs forment un groupe (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Un groupe est créé en entier ou pas du tout : le script ne remplace jamais un Secret existant, et s'arrête si seuls certains Secrets d'un groupe existent. Un groupe ajouté plus tard se crée sur un cluster existant sans toucher aux autres. Cinq groupes :
   - `stack` : les cinq premiers Secrets ;
   - `nessie-db` : le rôle PostgreSQL de Nessie (voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)) ;
   - `streaming` : les clés du writer temps réel (ADR 010). Le script les ajoute aussi comme identité dans `seaweedfs-s3-config`, par [secrets/add_s3_identity.py](secrets/add_s3_identity.py), sans toucher aux autres identités. Sur un cluster existant, il faut ensuite redémarrer le filer de SeaweedFS, qui ne lit ses identités qu'au démarrage : le script affiche la commande.
   - `monitoring` : le compte admin de Grafana (ADR 011), dans le namespace `monitoring`, que le script crée au besoin.
+  - `nessie-gc` : les clés de Nessie GC (ADR 013), ajoutées comme identité dans `seaweedfs-s3-config` de la même façon que `streaming`.
 - **Hors d'Argo CD** : les Secrets ne sont pas suivis par Argo CD, et portent des noms qu'aucun chart ne génère. Argo CD ne peut donc pas les supprimer.
 
 Lors du passage à ces Secrets, Argo CD a supprimé (`prune`) les Secrets que les charts ne généraient plus, sauf deux : `airflow-fernet-key` et `seaweedfs-s3-secret`. Les charts les déclarent comme hooks Helm (annotation `helm.sh/hook`), et Argo CD traite un hook à part : il ne le supprime jamais par `prune`. Ils ont été supprimés à la main. Ce piège vaut pour toute ressource déclarée en hook par un chart.
@@ -144,6 +145,22 @@ kubectl --context k3d-wattlake -n monitoring get secret grafana-admin \
 ```
 
 Un tableau de bord se modifie dans le dépôt : `wattlake.json`, puis commit. Grafana n'a pas de volume, et une modification faite dans son interface est perdue au redémarrage.
+
+## Maintenance des tables Iceberg
+
+Deux traitements nocturnes ([ADR 013](../docs/adr/013-maintenance-iceberg.md)) :
+
+- **02:30 UTC, compactage** : le DAG Airflow `iceberg_maintenance` regroupe les petits fichiers des deux tables bronze (`optimize` de Trino, voir [ingestion/README.md](../ingestion/README.md)).
+- **04:00 UTC, nettoyage** : le `CronJob` [nessie-gc/](nessie-gc/), déployé par l'Application Argo CD `nessie-gc`, lance Nessie GC 0.109.0 (`gc --inmemory --default-cutoff P7D`). Il garde tout ce que référence un commit des 7 derniers jours, sur toutes les branches, et supprime les autres fichiers Iceberg de SeaweedFS. Les fichiers plus récents que le début de l'exécution sont toujours gardés : une écriture en cours n'est jamais supprimée.
+
+Nessie GC a sa propre identité S3, `nessie-gc` (voir « Secrets »), passée par les variables d'environnement `AWS_*` plutôt que sur la ligne de commande. Trino ne supprime jamais de fichiers sur un catalogue Nessie, et les procédures `expire_snapshots` et `remove_orphan_files` d'Iceberg ne voient qu'une branche : elles ne conviennent pas ici.
+
+Lancer un nettoyage à la main, et suivre ses logs :
+
+```bash
+kubectl --context k3d-wattlake -n wattlake create job --from=cronjob/nessie-gc nessie-gc-manual
+kubectl --context k3d-wattlake -n wattlake logs -f job/nessie-gc-manual
+```
 
 ## Dépannage
 

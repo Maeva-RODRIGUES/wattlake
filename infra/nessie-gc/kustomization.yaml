@@ -1,0 +1,10 @@
+# Nessie GC, run every night (docs/adr/013-maintenance-iceberg.md).
+# Deployed by Argo CD (infra/argocd/apps/nessie-gc.yaml), from the main branch.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wattlake
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: wattlake
+resources:
+  - cronjob.yaml
