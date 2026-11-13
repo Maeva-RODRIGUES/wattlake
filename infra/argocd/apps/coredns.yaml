@@ -1,0 +1,23 @@
+# Argo CD Application for the DNS fallback of CoreDNS (docs/adr/014-dns-de-secours.md).
+# Synced automatically from the main branch.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: coredns
+  namespace: argocd
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  # Kustomize directory: the ConfigMap coredns-custom, read by k3s's CoreDNS.
+  source:
+    repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+    targetRevision: main
+    path: infra/coredns
+  # Automated sync: the cluster follows the main branch. prune deletes what is
+  # removed from Git, selfHeal reverts changes made by hand in the cluster.
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

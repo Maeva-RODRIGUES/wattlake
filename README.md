@@ -123,6 +123,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 - [x] Métriques et logs des traitements : Prometheus, Grafana, Loki (ADR 011)
 - [x] Temps réel raccordé à silver et gold, rafraîchis toutes les heures (ADR 012)
 - [x] Maintenance des tables Iceberg : compactage et nettoyage par Nessie GC, chaque nuit (ADR 013)
+- [x] DNS de secours pour les noms externes après un changement de réseau (ADR 014)
 
 ## Démarrer
 
@@ -306,11 +307,12 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 011 : supervision de la stack](docs/adr/011-supervision.md), ou pourquoi `kube-prometheus-stack` et ses `ServiceMonitor`, Loki en mode `SingleBinary` et Alloy plutôt qu'Elasticsearch.
 - [ADR 012 : raccordement du temps réel aux couches silver et gold](docs/adr/012-temps-reel-silver-gold.md), ou pourquoi une seule table silver avec l'historique prioritaire, et des énergies calculées selon le pas de temps de chaque ligne.
 - [ADR 013 : maintenance des tables Iceberg](docs/adr/013-maintenance-iceberg.md), ou pourquoi l'`optimize` de Trino pour le compactage et Nessie GC plutôt que `expire_snapshots` pour le nettoyage, avec 7 jours de rétention.
+- [ADR 014 : DNS de secours pour les noms externes](docs/adr/014-dns-de-secours.md), ou pourquoi des blocs de zone dans `coredns-custom`, avec le DNS local d'abord et des DNS publics en secours, plutôt que de recréer le cluster avec un autre CoreDNS.
 
 ## Limites et suites possibles
 
 - **Pas d'alertes.** Alertmanager est désactivé : le retard du writer et les échecs de DAG se lisent dans Grafana, sans notification (ADR 011).
-- **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS : `make cluster-dns-check` le détecte, `make cluster-restart` le corrige (voir [infra/README.md](infra/README.md)).
+- **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS. CoreDNS passe alors par des DNS publics pour les noms dont la stack a besoin (ADR 014), mais le téléchargement des images reste bloqué jusqu'à `make cluster-restart` : `make cluster-dns-check` le détecte (voir [infra/README.md](infra/README.md)).
 
 ## Ce que je ferais en production
 

@@ -1,0 +1,20 @@
+# DNS fallback for the external names the stack needs
+# (docs/adr/014-dns-de-secours.md). Imported by k3s's CoreDNS Corefile
+# ("import /etc/coredns/custom/*.server"): a server block for these zones takes
+# precedence over the main "." block for them.
+#
+# The node's resolver first (Docker's embedded DNS, through /etc/resolv.conf),
+# then public resolvers only when it fails: a timeout, or SERVFAIL / REFUSED,
+# which is what Docker answers once the laptop has left the network whose DNS
+# servers it captured.
+#   - github.com, github.io, githubusercontent.com: Argo CD (repository, most Helm charts)
+#   - opendatasoft.com: the real-time producer (ODRE API)
+#   - strimzi.io, apache.org, projectnessie.org: the other Helm charts
+github.com:53 github.io:53 githubusercontent.com:53 opendatasoft.com:53 strimzi.io:53 apache.org:53 projectnessie.org:53 {
+    errors
+    cache 30
+    forward . /etc/resolv.conf 1.1.1.1 9.9.9.9 {
+        policy sequential
+        failover SERVFAIL REFUSED
+    }
+}

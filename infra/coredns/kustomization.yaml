@@ -1,0 +1,15 @@
+# DNS fallback for external names (docs/adr/014-dns-de-secours.md).
+# k3s mounts the optional ConfigMap "coredns-custom" into its CoreDNS pod, in
+# /etc/coredns/custom/. Deployed by Argo CD (infra/argocd/apps/coredns.yaml).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: kube-system
+generatorOptions:
+  # The exact name k3s's CoreDNS Deployment mounts.
+  disableNameSuffixHash: true
+  labels:
+    app.kubernetes.io/part-of: wattlake
+configMapGenerator:
+  - name: coredns-custom
+    files:
+      - fallback.server

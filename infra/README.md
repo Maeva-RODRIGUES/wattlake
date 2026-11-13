@@ -1,6 +1,6 @@
 # infra
 
-Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi, supervision : `monitoring/`, `loki/`, `alloy/`), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), nettoyage nocturne par Nessie GC (`nessie-gc/`, kustomize), flux temps réel, producteur et writer (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
+Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi, supervision : `monitoring/`, `loki/`, `alloy/`), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), nettoyage nocturne par Nessie GC (`nessie-gc/`, kustomize), DNS de secours de CoreDNS (`coredns/`, kustomize), flux temps réel, producteur et writer (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
 
 ## GitOps avec Argo CD
 
@@ -184,7 +184,9 @@ Chaque nœud démarre séparément : l'un peut être sain et l'autre non. Si le 
 
 Au démarrage des conteneurs, Docker relit les serveurs DNS de l'ordinateur. Aucune donnée n'est perdue : volumes conservés, catalogue Nessie dans PostgreSQL. Argo CD resynchronise ensuite tout seul.
 
-Deux corrections permanentes ont été écartées :
+**DNS de secours** ([ADR 014](../docs/adr/014-dns-de-secours.md)) : pour les zones externes dont la stack a besoin (`github.com`, `github.io`, `githubusercontent.com`, `opendatasoft.com`, `strimzi.io`, `apache.org`, `projectnessie.org`), CoreDNS interroge d'abord le résolveur du nœud, puis 1.1.1.1 et 9.9.9.9 s'il échoue (délai dépassé, SERVFAIL ou REFUSED). La configuration est dans [coredns/](coredns/), déployée par l'Application Argo CD `coredns` dans le ConfigMap `coredns-custom`, que le CoreDNS de k3s importe. Argo CD, les charts et le producteur continuent donc de résoudre leurs noms après un changement de réseau. Le téléchargement des images, lui, passe par le résolveur du nœud : un nouveau déploiement d'image reste bloqué jusqu'à `make cluster-restart`, et `make cluster-dns-check` signale toujours la panne. Une nouvelle dépendance sur un autre domaine doit être ajoutée à [coredns/fallback.server](coredns/fallback.server).
+
+Autres corrections permanentes écartées :
 
 - des serveurs DNS publics fixes dans CoreDNS (`1.1.1.1`, par exemple) : le cluster ne dépendrait plus du réseau local, mais les réseaux d'entreprise et les VPN bloquent souvent le DNS sortant, et toutes les requêtes partiraient chez un tiers ;
 - faire écouter systemd-resolved sur l'interface Docker, qui suit les changements de réseau : c'est une configuration système de l'ordinateur, hors du dépôt, donc non reproductible.
