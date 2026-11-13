@@ -196,13 +196,15 @@ Le smoke test crée une table Iceberg depuis Trino, la relit, vérifie que ses f
 
 ### Charger les données et lancer les transformations
 
-Sur un cluster neuf, les deux DAG d'Airflow sont en pause, comme tout nouveau DAG. Les activer lance la chaîne complète :
+Sur un cluster neuf, les trois DAG d'Airflow sont en pause, comme tout nouveau DAG. Les activer lance la chaîne complète, puis la maintenance nocturne des tables (compactage, ADR 013) :
 
 ```bash
 kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
   airflow dags unpause dbt_transformations
 kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
   airflow dags unpause eco2mix_history_to_bronze
+kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
+  airflow dags unpause iceberg_maintenance
 ```
 
 Le DAG `eco2mix_history_to_bronze` rattrape alors l'historique mois par mois depuis janvier 2012, en quelques minutes. Chaque mois chargé met à jour l'Asset de la table bronze, ce qui déclenche `dbt_transformations` : silver et gold sont reconstruites et les tests lancés. Les détails sont dans [ingestion/README.md](ingestion/README.md) et [transform/README.md](transform/README.md).
