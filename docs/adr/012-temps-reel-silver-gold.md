@@ -67,7 +67,7 @@ Mesures faites sur les deux tables bronze, le 13 novembre 2026 :
 - **Hypothèse** : les valeurs temps réel sont traitées comme des puissances moyennes sur le quart d'heure, comme les valeurs consolidées. La spécification de RTE ne le précise que pour les données consolidées et définitives. Quand RTE consolidera septembre, l'écart entre les deux sources sur un même mois permettra de mesurer cette approximation.
 - **Le schéma de gold change** : `expected_half_hours`, `half_hours_with_data` et `half_hours_with_detail` deviennent `expected_hours`, `hours_with_data` et `hours_with_detail`, en heures. Une requête qui lisait les anciennes colonnes doit être adaptée.
 - **Une panne du flux temps réel bloque la publication de gold** jusqu'à ce que le producteur ait rattrapé son retard : c'est voulu, une journée incomplète ne doit pas paraître finie.
-- Gold n'intègre le temps réel qu'au rythme du DAG dbt. Son rafraîchissement horaire fait l'objet de l'étape suivante.
+- **Gold intègre le temps réel au rythme du DAG dbt** : toutes les heures, en plus de chaque chargement de l'historique (`AssetOrTimeSchedule`, étape 7.2). Chaque exécution réécrit silver et gold, environ 14 Mo : sans GC de Nessie, le stockage grossit d'environ 340 Mo par jour.
 
 ## Sources
 

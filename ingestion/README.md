@@ -48,7 +48,12 @@ Le DAG ([dags/eco2mix_history_to_bronze.py](dags/eco2mix_history_to_bronze.py)) 
 
 ## DAG `dbt_transformations`
 
-Le DAG ([dags/dbt_transformations.py](dags/dbt_transformations.py)) construit les couches silver et gold avec un `dbt build`, qui lance aussi les tests. Il est planifié sur l'Asset de la table bronze, et non sur un horaire : il ne tourne que lorsque bronze a changé. Pendant un rattrapage, les événements accumulés sont consommés par une seule exécution.
+Le DAG ([dags/dbt_transformations.py](dags/dbt_transformations.py)) construit les couches silver et gold avec un `dbt build`, qui lance aussi les tests. Il a deux déclencheurs (`AssetOrTimeSchedule`), le premier arrivé l'emporte :
+
+- **toutes les heures**, à l'heure pile (UTC), pour intégrer le temps réel que le writer ajoute à bronze toutes les 5 minutes, hors d'Airflow ([ADR 012](../docs/adr/012-temps-reel-silver-gold.md)). Gold a donc au plus une heure environ de retard sur le flux ;
+- **l'Asset de la table bronze de l'historique**, mis à jour par chaque chargement. Pendant un rattrapage, les événements accumulés sont consommés par une seule exécution.
+
+Chaque exécution réécrit silver et gold, environ 14 Mo de fichiers Parquet. Nessie gardant les versions précédentes, le stockage grossit d'environ 340 Mo par jour tant que son GC n'est pas en place (voir « Limites et suites possibles » dans le [README](../README.md)).
 
 Il applique le Write-Audit-Publish sur une branche Nessie (voir l'[ADR 008](../docs/adr/008-write-audit-publish.md)) :
 

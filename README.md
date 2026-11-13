@@ -48,7 +48,7 @@ Ces captures sont générées par `make screenshots`.
 flowchart LR
     API[API publique RTE<br/>éCO2mix] -->|export Parquet, mois par mois| AF[Airflow<br/>DAG bronze]
     AF -->|PyIceberg,<br/>catalogue REST| BR[(bronze)]
-    BR -.->|Asset : déclenche| DBT[Airflow<br/>DAG dbt]
+    BR -.->|Asset ou toutes les heures :<br/>déclenche| DBT[Airflow<br/>DAG dbt]
     DBT -->|dbt build sur Trino,<br/>branche audit puis fusion| SG[(silver, gold<br/>+ tests dbt)]
     NES[Nessie<br/>catalogue versionné] --- BR
     NES --- SG
@@ -62,7 +62,7 @@ flowchart LR
     S3 --- RT
 ```
 
-Les tables sont au format Iceberg, dans le catalogue Nessie et sur SeaweedFS. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement déclenche le DAG dbt : il reconstruit silver et gold sur une branche Nessie, lance les tests, et ne fusionne dans `main` que s'ils passent (ADR 008). En parallèle, un producteur publie les mesures temps réel dans Kafka, et un writer les ajoute à une table bronze Iceberg, exactement une fois, en un commit toutes les 5 minutes au plus (ADR 009 et 010). Silver réunit l'historique et la dernière version de chaque quart d'heure temps réel, l'historique restant prioritaire, et gold calcule les énergies selon le pas de temps de chaque source, jusqu'au jour en cours (ADR 012).
+Les tables sont au format Iceberg, dans le catalogue Nessie et sur SeaweedFS. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement, et chaque heure, déclenche le DAG dbt : il reconstruit silver et gold sur une branche Nessie, lance les tests, et ne fusionne dans `main` que s'ils passent (ADR 008). En parallèle, un producteur publie les mesures temps réel dans Kafka, et un writer les ajoute à une table bronze Iceberg, exactement une fois, en un commit toutes les 5 minutes au plus (ADR 009 et 010). Silver réunit l'historique et la dernière version de chaque quart d'heure temps réel, l'historique restant prioritaire, et gold calcule les énergies selon le pas de temps de chaque source, jusqu'au jour en cours (ADR 012).
 
 ### Plateforme
 
@@ -92,7 +92,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 | Moteur de requêtes | Trino | Exécute le SQL sur les tables Iceberg |
 | Ingestion | Python, PyIceberg | Télécharge les exports de l'API et les écrit dans bronze, un commit par mois |
 | Transformations | dbt (adaptateur Trino) | Construit les couches silver et gold, avec des tests |
-| Orchestration | Airflow | Planifie l'ingestion batch et lance dbt chaque fois que bronze change |
+| Orchestration | Airflow | Planifie l'ingestion batch, et lance dbt toutes les heures et chaque fois que l'historique change |
 | Streaming | Kafka (KRaft), opérateur Strimzi ; producteur et writer Python (confluent-kafka, PyIceberg) | Le producteur publie les mesures temps réel dans Kafka (ADR 009), le writer les écrit dans une table bronze Iceberg (ADR 010) |
 | Supervision | Prometheus, Grafana, Loki, Alloy (ADR 011) | Collecte les métriques et les logs de toute la stack ; le tableau de bord « WattLake » suit la fraîcheur du flux temps réel |
 | Intégration continue | GitHub Actions, Dependabot (ADR 005) | Vérifie le code à chaque modification et publie les images Airflow et temps réel |
@@ -121,6 +121,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 **Étape 4 : temps réel et observabilité**
 - [x] Flux temps réel : API, Kafka, Iceberg (ADR 009 et 010)
 - [x] Métriques et logs des traitements : Prometheus, Grafana, Loki (ADR 011)
+- [x] Temps réel raccordé à silver et gold, rafraîchis toutes les heures (ADR 012)
 
 ## Démarrer
 
@@ -304,7 +305,7 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 
 ## Limites et suites possibles
 
-- **Pas de maintenance des tables Iceberg.** Le writer fait une centaine de commits par jour : il faudrait compacter les petits fichiers et nettoyer ceux que plus aucun commit Nessie ne référence (GC de Nessie, voir l'ADR 010).
+- **Pas de maintenance des tables Iceberg.** Le writer fait une centaine de commits par jour, et le DAG dbt réécrit silver et gold toutes les heures (environ 340 Mo de fichiers par jour) : il faudrait compacter les petits fichiers et nettoyer ceux que plus aucun commit Nessie ne référence (GC de Nessie, voir les ADR 010 et 012).
 - **Pas d'alertes.** Alertmanager est désactivé : le retard du writer et les échecs de DAG se lisent dans Grafana, sans notification (ADR 011).
 - **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS : `make cluster-dns-check` le détecte, `make cluster-restart` le corrige (voir [infra/README.md](infra/README.md)).
 

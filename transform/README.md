@@ -19,7 +19,7 @@ La cible crée au besoin `transform/.venv` avec [uv](https://docs.astral.sh/uv/)
 
 ## Exécution par Airflow
 
-Dans le cluster, le DAG `dbt_transformations` lance `dbt build --target audit` chaque fois que la table bronze change, puis fusionne la branche Nessie `audit` dans `main` si les tests passent (Write-Audit-Publish, voir l'[ADR 008](../docs/adr/008-write-audit-publish.md) et [ingestion/README.md](../ingestion/README.md)). L'image Airflow contient :
+Dans le cluster, le DAG `dbt_transformations` lance `dbt build --target audit` toutes les heures, et chaque fois que la table bronze de l'historique change, puis fusionne la branche Nessie `audit` dans `main` si les tests passent (Write-Audit-Publish, voir l'[ADR 008](../docs/adr/008-write-audit-publish.md) et [ingestion/README.md](../ingestion/README.md)). L'image Airflow contient :
 
 - un environnement virtuel dbt dédié, `/opt/dbt/venv`, installé depuis [requirements.txt](requirements.txt), séparé de celui d'Airflow dont les contraintes diffèrent pour 26 paquets communs ;
 - ce projet, dans `/opt/wattlake/transform`, avec `dbt_utils` déjà installé par `dbt deps` à la construction de l'image.

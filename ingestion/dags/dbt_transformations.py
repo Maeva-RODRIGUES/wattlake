@@ -1,9 +1,15 @@
-"""Build the silver and gold layers with dbt whenever the bronze table changes.
+"""Build the silver and gold layers with dbt every hour, and whenever the history changes.
 
-The DAG is scheduled on the Asset of the bronze table: it runs after each
-bronze load that wrote rows. Asset events that pile up while a run is in
-progress (during a catchup for example) are consumed by the next run together,
-so dbt does not rebuild once per loaded month.
+Two triggers (AssetOrTimeSchedule), whichever comes first:
+
+- every hour, on the hour: silver and gold take in the real-time data that the
+  streaming writer appends to bronze every 5 minutes, outside Airflow
+  (docs/adr/012-temps-reel-silver-gold.md). Gold is at most about an hour
+  behind the stream;
+- after each load of the history bronze table (its Asset). Asset events that
+  pile up while a run is in progress (during a catchup for example) are
+  consumed by the next run together, so dbt does not rebuild once per loaded
+  month.
 
 Write-Audit-Publish (docs/adr/008-write-audit-publish.md), in three tasks:
 
@@ -31,7 +37,7 @@ from datetime import timedelta
 
 import pendulum
 from airflow.providers.standard.operators.bash import BashOperator
-from airflow.sdk import Asset, dag, task
+from airflow.sdk import Asset, AssetOrTimeSchedule, CronTriggerTimetable, dag, task
 
 from wattlake_ingestion.lakehouse import AUDIT_BRANCH, BRONZE_TABLE, BRONZE_TABLE_URI, MAIN_BRANCH
 
@@ -41,7 +47,10 @@ DBT_PROJECT_DIR = "/opt/wattlake/transform"
 
 @dag(
     dag_id="dbt_transformations",
-    schedule=[BRONZE],
+    schedule=AssetOrTimeSchedule(
+        timetable=CronTriggerTimetable("0 * * * *", timezone="UTC"),
+        assets=[BRONZE],
+    ),
     start_date=pendulum.datetime(2026, 11, 1, tz="UTC"),
     catchup=False,
     # Also what makes a single audit branch enough: one run uses it at a time.
