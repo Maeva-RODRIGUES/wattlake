@@ -10,9 +10,11 @@ metadata:
 spec:
   schedule: "0 4 * * *"
   timeZone: UTC
-  # Never two collections at once, and no catch-up of missed nights.
+  # Never two collections at once.
   concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 3600
+  # A night missed while the machine was asleep or off runs when the cluster
+  # comes back, up to 20 hours late, so at most once before the next schedule.
+  startingDeadlineSeconds: 72000
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
