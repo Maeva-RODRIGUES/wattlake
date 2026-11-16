@@ -1,6 +1,6 @@
 {#-
     Compact the files of the bronze tables (docs/adr/013-maintenance-iceberg.md).
-    Run by the Airflow DAG iceberg_maintenance, every night:
+    Run by the Airflow DAG iceberg_maintenance, every day:
         dbt run-operation optimize_bronze_tables --target dev
 
     The history is appended month by month and the real-time table every few

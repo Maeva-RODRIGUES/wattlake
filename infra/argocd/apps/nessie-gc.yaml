@@ -1,4 +1,4 @@
-# Argo CD Application for Nessie GC, the nightly cleanup of unreferenced
+# Argo CD Application for Nessie GC, the daily cleanup of unreferenced
 # Iceberg files (docs/adr/013-maintenance-iceberg.md). Synced automatically from the main branch.
 apiVersion: argoproj.io/v1alpha1
 kind: Application

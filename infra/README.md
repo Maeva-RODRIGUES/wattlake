@@ -1,6 +1,6 @@
 # infra
 
-Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi, supervision : `monitoring/`, `loki/`, `alloy/`), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), nettoyage nocturne par Nessie GC (`nessie-gc/`, kustomize), DNS de secours de CoreDNS (`coredns/`, kustomize), flux temps réel, producteur et writer (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
+Déploiement de la stack sur Kubernetes : configuration du cluster k3d et vérification de son DNS (`k3d/`), valeurs des charts Helm (SeaweedFS, Nessie, Trino, Airflow, opérateur Strimzi, supervision : `monitoring/`, `loki/`, `alloy/`), ressources du cluster Kafka et ses topics (`kafka/`, kustomize), nettoyage quotidien par Nessie GC (`nessie-gc/`, kustomize), DNS de secours de CoreDNS (`coredns/`, kustomize), flux temps réel, producteur et writer (`streaming/`, kustomize), manifestes de PostgreSQL (`postgres/`, kustomize), Applications Argo CD (`argocd/`) et script de création des Secrets (`secrets/`).
 
 ## GitOps avec Argo CD
 
@@ -148,12 +148,12 @@ Un tableau de bord se modifie dans le dépôt : `wattlake.json`, puis commit. Gr
 
 ## Maintenance des tables Iceberg
 
-Deux traitements nocturnes ([ADR 013](../docs/adr/013-maintenance-iceberg.md)) :
+Deux traitements quotidiens, en milieu de journée, quand l'ordinateur est en général allumé ([ADR 013](../docs/adr/013-maintenance-iceberg.md)) :
 
-- **02:30 UTC, compactage** : le DAG Airflow `iceberg_maintenance` regroupe les petits fichiers des deux tables bronze (`optimize` de Trino, voir [ingestion/README.md](../ingestion/README.md)).
-- **04:00 UTC, nettoyage** : le `CronJob` [nessie-gc/](nessie-gc/), déployé par l'Application Argo CD `nessie-gc`, lance Nessie GC 0.109.0 (`gc --inmemory --default-cutoff P7D`). Il garde tout ce que référence un commit des 7 derniers jours, sur toutes les branches, et supprime les autres fichiers Iceberg de SeaweedFS. Les fichiers plus récents que le début de l'exécution sont toujours gardés : une écriture en cours n'est jamais supprimée.
+- **11:30 UTC, compactage** : le DAG Airflow `iceberg_maintenance` regroupe les petits fichiers des deux tables bronze (`optimize` de Trino, voir [ingestion/README.md](../ingestion/README.md)).
+- **12:00 UTC, nettoyage** : le `CronJob` [nessie-gc/](nessie-gc/), déployé par l'Application Argo CD `nessie-gc`, lance Nessie GC 0.109.0 (`gc --inmemory --default-cutoff P7D`). Il garde tout ce que référence un commit des 7 derniers jours, sur toutes les branches, et supprime les autres fichiers Iceberg de SeaweedFS. Les fichiers plus récents que le début de l'exécution sont toujours gardés : une écriture en cours n'est jamais supprimée.
 
-Si l'ordinateur est en veille ou éteint à ces heures, les deux traitements rattrapent la nuit manquée au redémarrage du cluster : le DAG par le rattrapage d'Airflow (dernière échéance seulement, `catchup=False`), le `CronJob` jusqu'à 20 heures de retard (`startingDeadlineSeconds`), donc au plus une fois avant l'échéance suivante.
+Si l'ordinateur est en veille ou éteint à ces heures, les deux traitements rattrapent l'exécution manquée au redémarrage du cluster : le DAG par le rattrapage d'Airflow (dernière échéance seulement, `catchup=False`), le `CronJob` jusqu'à 20 heures de retard (`startingDeadlineSeconds`), donc au plus une fois avant l'échéance suivante.
 
 Nessie GC a sa propre identité S3, `nessie-gc` (voir « Secrets »), passée par les variables d'environnement `AWS_*` plutôt que sur la ligne de commande. Trino ne supprime jamais de fichiers sur un catalogue Nessie, et les procédures `expire_snapshots` et `remove_orphan_files` d'Iceberg ne voient qu'une branche : elles ne conviennent pas ici.
 

@@ -1,4 +1,4 @@
-# Nessie GC, run every night (docs/adr/013-maintenance-iceberg.md).
+# Nessie GC, run every day (docs/adr/013-maintenance-iceberg.md).
 # Deployed by Argo CD (infra/argocd/apps/nessie-gc.yaml), from the main branch.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

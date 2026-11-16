@@ -72,7 +72,7 @@ Le catalogue `wattlake` est configuré par les variables d'environnement `PYICEB
 
 ## DAG `iceberg_maintenance`
 
-Le DAG ([dags/iceberg_maintenance.py](dags/iceberg_maintenance.py)) compacte chaque nuit, à 02:30 UTC, les fichiers des deux tables bronze ([ADR 013](../docs/adr/013-maintenance-iceberg.md)). Le writer temps réel ajoute environ 100 fichiers de 30 Ko par jour : `ALTER TABLE … EXECUTE optimize` les réécrit en quelques gros fichiers, sans changer le contenu. Testé sur la branche `audit` : 176 fichiers ramenés à 1 pour l'historique, 43 à 1 pour le temps réel, avec les mêmes lignes et la même somme de contrôle.
+Le DAG ([dags/iceberg_maintenance.py](dags/iceberg_maintenance.py)) compacte chaque jour, à 11:30 UTC, les fichiers des deux tables bronze ([ADR 013](../docs/adr/013-maintenance-iceberg.md)). Le writer temps réel ajoute environ 100 fichiers de 30 Ko par jour : `ALTER TABLE … EXECUTE optimize` les réécrit en quelques gros fichiers, sans changer le contenu. Testé sur la branche `audit` : 176 fichiers ramenés à 1 pour l'historique, 43 à 1 pour le temps réel, avec les mêmes lignes et la même somme de contrôle.
 
 - **Par une macro dbt** ([transform/macros/optimize_bronze_tables.sql](../transform/macros/optimize_bronze_tables.sql)), lancée par `dbt run-operation optimize_bronze_tables --target dev` : elle réutilise la connexion de dbt à Trino et les sources du projet.
 - **Directement sur `main`**, sans Write-Audit-Publish : le contenu des tables ne change pas. Si le compactage et le writer commitent la même table au même moment, Nessie rejette l'un des deux : le compactage recommence (deux nouvelles tentatives), ou le writer redémarre et retrouve ses offsets dans les données.

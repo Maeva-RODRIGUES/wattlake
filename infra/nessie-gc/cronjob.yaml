@@ -1,6 +1,6 @@
-# Nessie GC (docs/adr/013-maintenance-iceberg.md): every night, deletes the
+# Nessie GC (docs/adr/013-maintenance-iceberg.md): every day, deletes the
 # Iceberg files that no Nessie commit of the last 7 days references, on every
-# branch. Runs after the bronze compaction of the iceberg_maintenance DAG (02:30).
+# branch. Runs after the bronze compaction of the iceberg_maintenance DAG (11:30).
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -8,12 +8,13 @@ metadata:
   labels:
     app.kubernetes.io/name: nessie-gc
 spec:
-  schedule: "0 4 * * *"
+  schedule: "0 12 * * *"
   timeZone: UTC
   # Never two collections at once.
   concurrencyPolicy: Forbid
-  # A night missed while the machine was asleep or off runs when the cluster
-  # comes back, up to 20 hours late, so at most once before the next schedule.
+  # Midday, when the machine is usually on. A run missed while it was asleep or
+  # off starts when the cluster comes back, up to 20 hours late, so at most
+  # once before the next schedule.
   startingDeadlineSeconds: 72000
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

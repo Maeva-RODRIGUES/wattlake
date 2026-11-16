@@ -122,7 +122,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 - [x] Flux temps réel : API, Kafka, Iceberg (ADR 009 et 010)
 - [x] Métriques et logs des traitements : Prometheus, Grafana, Loki (ADR 011)
 - [x] Temps réel raccordé à silver et gold, rafraîchis toutes les heures (ADR 012)
-- [x] Maintenance des tables Iceberg : compactage et nettoyage par Nessie GC, chaque nuit (ADR 013)
+- [x] Maintenance des tables Iceberg : compactage et nettoyage par Nessie GC, chaque jour (ADR 013)
 - [x] DNS de secours pour les noms externes après un changement de réseau (ADR 014)
 
 ## Démarrer
@@ -197,7 +197,7 @@ Le smoke test crée une table Iceberg depuis Trino, la relit, vérifie que ses f
 
 ### Charger les données et lancer les transformations
 
-Sur un cluster neuf, les trois DAG d'Airflow sont en pause, comme tout nouveau DAG. Les activer lance la chaîne complète, puis la maintenance nocturne des tables (compactage, ADR 013) :
+Sur un cluster neuf, les trois DAG d'Airflow sont en pause, comme tout nouveau DAG. Les activer lance la chaîne complète, puis la maintenance quotidienne des tables (compactage, ADR 013) :
 
 ```bash
 kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \

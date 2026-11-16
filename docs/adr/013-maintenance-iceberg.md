@@ -29,7 +29,7 @@ Ce que permet la stack, vérifié dans le code et la documentation des versions 
 
 | Option | Avantages | Limites |
 | --- | --- | --- |
-| Nessie GC en `CronJob`, état en mémoire (`--inmemory`) | Un seul conteneur par nuit, aucune base de données. Outil prévu par Nessie, qui tient compte de toutes les branches | Une exécution interrompue recommence depuis le début. Pas de relecture des fichiers avant suppression |
+| Nessie GC en `CronJob`, état en mémoire (`--inmemory`) | Un seul conteneur par jour, aucune base de données. Outil prévu par Nessie, qui tient compte de toutes les branches | Une exécution interrompue recommence depuis le début. Pas de relecture des fichiers avant suppression |
 | Nessie GC avec son état dans PostgreSQL | Phases reprenables, suppressions différées et relisibles (`--defer-deletes`) | Une base, un rôle et un Secret de plus, et une manipulation SQL sur le volume PostgreSQL existant |
 | `expire_snapshots` et `remove_orphan_files` d'Iceberg | Commandes Trino connues | Ne voient qu'une branche : elles supprimeraient des fichiers encore utilisés par une autre |
 
@@ -44,16 +44,18 @@ Ce que permet la stack, vérifié dans le code et la documentation des versions 
 
 | Option | Avantages | Limites |
 | --- | --- | --- |
-| `optimize` de Trino sur les tables bronze, chaque nuit, par une macro dbt lancée d'un DAG Airflow | Réutilise la connexion de dbt à Trino et les sources du projet. Pas d'outil nouveau | Le compactage se fait directement sur `main` |
+| `optimize` de Trino sur les tables bronze, chaque jour, par une macro dbt lancée d'un DAG Airflow | Réutilise la connexion de dbt à Trino et les sources du projet. Pas d'outil nouveau | Le compactage se fait directement sur `main` |
 | Pas de compactage | Rien à exploiter | Environ 36 000 petits fichiers par an dans la table temps réel |
 
 ## Décision
 
-**Compactage (étape 8.1)** : le DAG Airflow `iceberg_maintenance`, à 02:30 UTC, lance `dbt run-operation optimize_bronze_tables --target dev`. La macro exécute `ALTER TABLE … EXECUTE optimize(file_size_threshold => '64MB')` sur les deux tables bronze, sur `main`, où écrit le writer. Silver et gold, réécrites en entier à chaque exécution du DAG dbt, n'en ont pas besoin.
+**Compactage (étape 8.1)** : le DAG Airflow `iceberg_maintenance`, à 11:30 UTC, lance `dbt run-operation optimize_bronze_tables --target dev`. La macro exécute `ALTER TABLE … EXECUTE optimize(file_size_threshold => '64MB')` sur les deux tables bronze, sur `main`, où écrit le writer. Silver et gold, réécrites en entier à chaque exécution du DAG dbt, n'en ont pas besoin.
 
 Le compactage ne passe pas par le Write-Audit-Publish : il ne change pas le contenu des tables, seulement leur découpage en fichiers. Si le compactage et le writer commitent la même table au même moment, Nessie en accepte un et rejette l'autre. Le compactage recommence (deux nouvelles tentatives), ou le writer redémarre et retrouve ses offsets dans les données (ADR 010).
 
-**Nettoyage (étape 8.2)** : un `CronJob` lance chaque nuit, à 04:00 UTC, Nessie GC 0.109.0 (`gc --inmemory --default-cutoff P7D`), après le compactage. Il garde 7 jours d'historique sur toutes les branches, et supprime les fichiers Iceberg qui ne servent plus à aucun commit gardé. Il utilise sa propre identité S3, `nessie-gc` (ADR 006), la seule à supprimer des fichiers en masse, passée par les variables d'environnement `AWS_*` plutôt que dans l'option `--iceberg`, qui l'aurait mise sur la ligne de commande.
+**Nettoyage (étape 8.2)** : un `CronJob` lance chaque jour, à 12:00 UTC, Nessie GC 0.109.0 (`gc --inmemory --default-cutoff P7D`), après le compactage. Il garde 7 jours d'historique sur toutes les branches, et supprime les fichiers Iceberg qui ne servent plus à aucun commit gardé. Il utilise sa propre identité S3, `nessie-gc` (ADR 006), la seule à supprimer des fichiers en masse, passée par les variables d'environnement `AWS_*` plutôt que dans l'option `--iceberg`, qui l'aurait mise sur la ligne de commande.
+
+**Horaires** : les deux traitements tournent en milieu de journée, et non la nuit. Le cluster tourne sur un ordinateur portable, souvent éteint ou en veille la nuit. Les exécutions nocturnes étaient donc presque toujours rattrapées au réveil, pendant que Nessie et Airflow redémarraient, ce qui faisait échouer Nessie GC. À 11:30 et 12:00 UTC, l'ordinateur est en général allumé. Le compactage garde sa demi-heure, à l'écart du DAG dbt lancé à chaque heure pile. Le rattrapage au redémarrage reste en place pour les jours où l'ordinateur est éteint à ces heures.
 
 ## Conséquences
 

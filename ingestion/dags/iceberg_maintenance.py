@@ -1,4 +1,4 @@
-"""Nightly maintenance of the Iceberg tables (docs/adr/013-maintenance-iceberg.md).
+"""Daily maintenance of the Iceberg tables (docs/adr/013-maintenance-iceberg.md).
 
 compact_bronze runs Trino's optimize on the two bronze tables, through the dbt
 macro optimize_bronze_tables (transform/macros/), so that it reuses dbt's
@@ -27,8 +27,9 @@ DBT_PROJECT_DIR = "/opt/wattlake/transform"
 
 @dag(
     dag_id="iceberg_maintenance",
-    # 02:30 UTC: away from the hourly dbt run (on the hour).
-    schedule=CronTriggerTimetable("30 2 * * *", timezone="UTC"),
+    # 11:30 UTC: midday, when the machine is usually on, and away from the
+    # hourly dbt run (on the hour).
+    schedule=CronTriggerTimetable("30 11 * * *", timezone="UTC"),
     start_date=pendulum.datetime(2026, 11, 1, tz="UTC"),
     catchup=False,
     max_active_runs=1,
