@@ -15,4 +15,4 @@ images:
   # was built from. To deploy a new version, change it in a commit of its own.
   - name: wattlake-streaming
     newName: ghcr.io/maeva-rodrigues/wattlake-streaming
-    newTag: ca29f37c5d4c01eef5fea7b169e2c50668b1b044
+    newTag: be83fb622cee6308ffe69d6af8f31426afc754fd
