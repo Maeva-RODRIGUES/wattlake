@@ -14,15 +14,22 @@ writer restarts and resumes from the offsets in the table (ADR 010).
 
 The files replaced by the compaction stay in the object store until Nessie GC
 removes them, once they are older than the retention (step 8.2).
+
+run_nessie_gc then starts Nessie GC as a Kubernetes Job, from the template of
+the suspended CronJob nessie-gc (infra/nessie-gc/), and waits for its end. The
+CronJob no longer schedules itself: its controller times the next run with a
+timer that stops while the laptop sleeps, and started runs hours late. Airflow's
+scheduler compares the schedule with the wall clock on every loop.
 """
 
 from datetime import timedelta
 
 import pendulum
 from airflow.providers.standard.operators.bash import BashOperator
-from airflow.sdk import CronTriggerTimetable, dag
+from airflow.sdk import CronTriggerTimetable, dag, get_current_context, task
 
 DBT_PROJECT_DIR = "/opt/wattlake/transform"
+NAMESPACE = "wattlake"
 
 
 @dag(
@@ -38,7 +45,7 @@ DBT_PROJECT_DIR = "/opt/wattlake/transform"
     doc_md=__doc__,
 )
 def iceberg_maintenance() -> None:
-    BashOperator(
+    compact_bronze = BashOperator(
         task_id="compact_bronze",
         bash_command=(
             "/opt/dbt/venv/bin/dbt run-operation optimize_bronze_tables --target dev"
@@ -48,6 +55,19 @@ def iceberg_maintenance() -> None:
         env={"TRINO_HOST": "trino.wattlake.svc.cluster.local", "TRINO_PORT": "8080"},
         append_env=True,
     )
+
+    # No Airflow retries: the Job retries its pod itself (backoffLimit), and a
+    # new attempt of the task would only wait for the same Job (same name).
+    # Its own deadline (activeDeadlineSeconds, 1 hour) ends it before this one.
+    @task(retries=0, execution_timeout=timedelta(minutes=70))
+    def run_nessie_gc() -> None:
+        from wattlake_ingestion.kubernetes_job import run_job_from_cronjob
+
+        run_after = get_current_context()["dag_run"].run_after
+        run_job_from_cronjob(NAMESPACE, "nessie-gc", f"nessie-gc-{run_after:%Y%m%d-%H%M}")
+
+    # Nessie GC runs even if the compaction fails: the cleanup does not need it.
+    compact_bronze >> run_nessie_gc.override(trigger_rule="all_done")()
 
 
 iceberg_maintenance()

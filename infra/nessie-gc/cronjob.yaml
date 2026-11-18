@@ -1,6 +1,10 @@
-# Nessie GC (docs/adr/013-maintenance-iceberg.md): every day, deletes the
-# Iceberg files that no Nessie commit of the last 7 days references, on every
-# branch. Runs after the bronze compaction of the iceberg_maintenance DAG (11:30).
+# Nessie GC (docs/adr/013-maintenance-iceberg.md): deletes the Iceberg files
+# that no Nessie commit of the last 7 days references, on every branch.
+# Suspended: this CronJob is only the template of the Job that the Airflow DAG
+# iceberg_maintenance starts every day after the bronze compaction (11:30 UTC).
+# Its controller times runs with a timer that stops while the laptop sleeps,
+# which made runs start hours late. To run it by hand:
+#   kubectl create job --from=cronjob/nessie-gc nessie-gc-manual-<date>
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -8,14 +12,10 @@ metadata:
   labels:
     app.kubernetes.io/name: nessie-gc
 spec:
+  # Never used while suspended, but required by the CronJob API.
   schedule: "0 12 * * *"
   timeZone: UTC
-  # Never two collections at once.
-  concurrencyPolicy: Forbid
-  # Midday, when the machine is usually on. A run missed while it was asleep or
-  # off starts when the cluster comes back, up to 20 hours late, so at most
-  # once before the next schedule.
-  startingDeadlineSeconds: 72000
+  suspend: true
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:

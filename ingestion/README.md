@@ -76,7 +76,7 @@ Le DAG ([dags/iceberg_maintenance.py](dags/iceberg_maintenance.py)) compacte cha
 
 - **Par une macro dbt** ([transform/macros/optimize_bronze_tables.sql](../transform/macros/optimize_bronze_tables.sql)), lancée par `dbt run-operation optimize_bronze_tables --target dev` : elle réutilise la connexion de dbt à Trino et les sources du projet.
 - **Directement sur `main`**, sans Write-Audit-Publish : le contenu des tables ne change pas. Si le compactage et le writer commitent la même table au même moment, Nessie rejette l'un des deux : le compactage recommence (deux nouvelles tentatives), ou le writer redémarre et retrouve ses offsets dans les données.
-- **Les anciens fichiers restent** dans SeaweedFS jusqu'au passage de Nessie GC.
+- **Les anciens fichiers restent** dans SeaweedFS jusqu'au passage de Nessie GC, que la tâche suivante du DAG, `run_nessie_gc`, lance juste après dans un Job Kubernetes (module [kubernetes_job.py](src/wattlake_ingestion/kubernetes_job.py), voir [infra/README.md](../infra/README.md)). Elle s'exécute même si le compactage échoue.
 
 ### Recharger tout l'historique
 

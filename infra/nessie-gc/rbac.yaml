@@ -1,0 +1,33 @@
+# Lets the Airflow DAG iceberg_maintenance start Nessie GC: its tasks run in
+# the scheduler pod (LocalExecutor), under the scheduler's service account.
+# Read the CronJob template, create the Job, follow its status. Nothing else:
+# no deletion, no access to Secrets or to other workloads.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nessie-gc-launcher
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    resourceNames: ["nessie-gc"]
+    verbs: ["get"]
+  # "create" cannot be limited by name: the name is not known before creation.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create"]
+  - apiGroups: ["batch"]
+    resources: ["jobs/status"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nessie-gc-launcher
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: nessie-gc-launcher
+subjects:
+  - kind: ServiceAccount
+    name: airflow-scheduler
+    namespace: wattlake
