@@ -8,9 +8,10 @@ rewrites them into a few larger ones.
 
 It runs on main directly (--target dev), not through Write-Audit-Publish: the
 content of the tables does not change, only the way it is split into files.
-If optimize and the writer commit to the same table at the same moment, Nessie
-accepts one commit and rejects the other: optimize fails and is retried, or the
-writer restarts and resumes from the offsets in the table (ADR 010).
+If optimize commits while the writer prepares a batch, Nessie rejects the
+writer's append: the writer reloads the table and appends the batch again
+(streaming/src/wattlake_streaming/writer.py). The other way round, optimize
+fails and is retried.
 
 The files replaced by the compaction stay in the object store until Nessie GC
 removes them, once they are older than the retention (step 8.2).

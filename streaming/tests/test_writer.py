@@ -6,9 +6,11 @@ from types import SimpleNamespace
 import pytest
 from confluent_kafka import KafkaException
 from conftest import message
+from pyiceberg.exceptions import ValidationException
 
+from wattlake_streaming import writer
 from wattlake_streaming.bronze import TABLE, ensure_table, next_offsets
-from wattlake_streaming.writer import Settings, collect, run_batch, write
+from wattlake_streaming.writer import COMMIT_ATTEMPTS, OffsetsMismatchError, Settings, collect, run_batch, write
 
 TOPIC = "eco2mix-realtime"
 
@@ -84,6 +86,64 @@ def test_write_appends_and_moves_offsets(catalog):
     assert offsets == {0: 6, 1: 7, 2: 40}
     assert next_offsets(catalog.load_table(TABLE), TOPIC) == offsets
     assert table.scan().to_arrow().num_rows == 2
+
+
+def reject_first_appends(monkeypatch, rejections: int) -> list[int]:
+    """Make the first appends fail as Nessie rejects them after a compaction.
+
+    Returns the list of append attempts (their number is its length).
+    """
+    attempts: list[int] = []
+    real_append = writer.append
+
+    def append(table, batch, topic, next_offsets):
+        attempts.append(1)
+        if len(attempts) <= rejections:
+            raise ValidationException("Cannot find starting snapshot 42")
+        real_append(table, batch, topic, next_offsets)
+
+    monkeypatch.setattr(writer, "append", append)
+    return attempts
+
+
+def test_write_retries_after_a_concurrent_compaction(catalog, monkeypatch):
+    table = ensure_table(catalog)
+    offsets = write(table, [message(0), message(1)], TOPIC, {})
+    # The compaction rewrites the table through another handle: the writer's
+    # handle is now behind the catalog.
+    compaction = catalog.load_table(TABLE)
+    compaction.overwrite(compaction.scan().to_arrow())
+    attempts = reject_first_appends(monkeypatch, rejections=1)
+
+    offsets = write(table, [message(2)], TOPIC, offsets)
+
+    assert len(attempts) == 2
+    assert offsets == {0: 3}
+    reloaded = catalog.load_table(TABLE)
+    assert next_offsets(reloaded, TOPIC) == {0: 3}
+    assert sorted(reloaded.scan().to_arrow()["_kafka_offset"].to_pylist()) == [0, 1, 2]
+
+
+def test_write_gives_up_after_the_last_attempt(catalog, monkeypatch):
+    table = ensure_table(catalog)
+    attempts = reject_first_appends(monkeypatch, rejections=COMMIT_ATTEMPTS)
+
+    with pytest.raises(ValidationException):
+        write(table, [message(0)], TOPIC, {})
+    assert len(attempts) == COMMIT_ATTEMPTS
+    assert table.current_snapshot() is None
+
+
+def test_write_does_not_retry_when_the_table_offsets_moved(catalog, monkeypatch):
+    table = ensure_table(catalog)
+    write(table, [message(0), message(1)], TOPIC, {})
+    attempts = reject_first_appends(monkeypatch, rejections=1)
+
+    # The writer believes it starts at offset 1, the table says 2: appending
+    # offset 1 again would duplicate it.
+    with pytest.raises(OffsetsMismatchError, match=r"\{0: 2\}, expected \{0: 1\}"):
+        write(table, [message(1)], TOPIC, {0: 1})
+    assert len(attempts) == 1
 
 
 def test_run_batch_writes_then_commits_offsets(catalog):

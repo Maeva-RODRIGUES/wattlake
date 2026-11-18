@@ -9,6 +9,12 @@ Loop:
 
 At startup, the offsets come from the table, not from Kafka: what is in the
 table and where to resume always agree, whatever the crash point.
+
+The daily compaction (ADR 013) also commits to the table. When it commits
+between the writer's read of the table and its append, the append is rejected:
+PyIceberg's own retry needs the snapshot the append started from, and through
+Nessie a table only exposes its current snapshot. The writer then reloads the
+table and appends the same batch again (write).
 Run with: python -m wattlake_streaming.writer (configuration: Settings).
 """
 
@@ -26,11 +32,20 @@ from typing import Any, Protocol
 
 from confluent_kafka import OFFSET_BEGINNING, Consumer, KafkaException, Message, TopicPartition
 from pyiceberg.catalog import load_catalog
+from pyiceberg.exceptions import CommitFailedException, ValidationException
 from pyiceberg.table import Table
 
 from wattlake_streaming.bronze import TABLE, KafkaRecord, append, ensure_table, next_offsets, to_batch
 
 logger = logging.getLogger(__name__)
+
+# Appends of one batch before giving up: a compaction takes a few seconds, so a
+# second attempt is normally enough.
+COMMIT_ATTEMPTS = 3
+
+
+class OffsetsMismatchError(RuntimeError):
+    """The table's offsets differ from the writer's: retrying could duplicate or lose rows."""
 
 
 @dataclass(frozen=True)
@@ -111,13 +126,35 @@ def collect(
 
 
 def write(table: Table, records: list[KafkaRecord], topic: str, offsets: dict[int, int]) -> dict[int, int]:
-    """Append records to table and return the new next offsets (offsets updated)."""
+    """Append records to table and return the new next offsets (offsets updated).
+
+    If a concurrent commit rejects the append, reload the table and append
+    again, up to COMMIT_ATTEMPTS times. PyIceberg raises these two exceptions
+    only when nothing was committed. Before appending again, the offsets in the
+    reloaded table must still be the ones this batch starts from: otherwise the
+    table changed in an unexpected way, and the writer stops (it then restarts
+    from the table's offsets).
+    """
     batch = to_batch(records, ingested_at=datetime.now(UTC))
     new_offsets = dict(offsets)
     for record in records:
         new_offsets[record.partition] = max(new_offsets.get(record.partition, 0), record.offset + 1)
-    append(table, batch, topic, new_offsets)
-    return new_offsets
+
+    for attempt in range(1, COMMIT_ATTEMPTS + 1):
+        try:
+            append(table, batch, topic, new_offsets)
+            return new_offsets
+        except (CommitFailedException, ValidationException) as error:
+            if attempt == COMMIT_ATTEMPTS:
+                raise
+            logger.warning("Append rejected by a concurrent commit (%s), reloading the table and retrying", error)
+            table.refresh()
+            table_offsets = next_offsets(table, topic)
+            if table_offsets != offsets:
+                raise OffsetsMismatchError(
+                    f"offsets in the table {table_offsets}, expected {offsets} before this batch"
+                ) from error
+    raise AssertionError("unreachable")
 
 
 def run_batch(
