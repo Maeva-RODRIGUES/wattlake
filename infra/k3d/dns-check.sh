@@ -59,10 +59,13 @@ for node in "${nodes[@]}"; do
         continue
     fi
     echo "DNS servers: $node_servers"
-    # A mismatch alone is only a warning: the old servers may still answer, and
-    # Docker may leave out some host servers (loopback ones, for example). What
-    # matters is whether names resolve.
-    if [ "$host_servers" != "$node_servers" ]; then
+    # Only a warning: the old servers may still answer. What matters is whether
+    # names resolve. The lists rarely match exactly even on the same network:
+    # Docker leaves out loopback servers, and the router's IPv6 server can come
+    # and go on the host. So the node is only flagged when it uses none of the
+    # host's current servers.
+    shared=$(comm -12 <(tr ' ' '\n' <<<"$host_servers" | sort) <(tr ' ' '\n' <<<"$node_servers" | sort) | xargs)
+    if [ -n "$host_servers" ] && [ -z "$shared" ]; then
         echo "WARNING: this node still uses the DNS servers of a previous network."
     fi
 
