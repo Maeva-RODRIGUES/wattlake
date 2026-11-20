@@ -13,7 +13,7 @@ Le producteur (ADR 009) publie les mesures temps réel dans le topic Kafka `eco2
 
 Il faut maintenant écrire ces messages dans le lac, au format Iceberg, dans le catalogue Nessie et sur SeaweedFS, comme le reste des tables.
 
-Le volume est très faible : environ 14 messages par quart d'heure, et un rattrapage d'environ 7 000 messages au premier démarrage. La table grandit d'environ 35 000 lignes par an.
+Le volume reste faible. Chaque rafraîchissement de RTE, toutes les 15 minutes, republie la fenêtre de recouvrement de 3 heures (ADR 009) : environ 14 messages, dont un seul quart d'heure nouveau. Chaque quart d'heure arrive donc une douzaine de fois, une ligne par version. Avec un cluster allumé en continu, la table grandit d'environ 1 350 lignes par jour, soit environ 490 000 lignes par an, autant que tout l'historique depuis 2012. Le premier démarrage rattrape environ 7 000 messages, un par quart d'heure : le topic compacté ne garde que la dernière version de chacun.
 
 ## Critères
 
@@ -76,6 +76,12 @@ Le format est vérifié message par message : un champ manquant ou inattendu arr
 - **Une seule table bronze par source** : l'historique (`eco2mix_national_history`) et le temps réel (`eco2mix_national_realtime`) restent séparés. Leur union et le dédoublonnage reviennent aux modèles dbt de la couche silver.
 - **Un rattrapage complet tient en un lot** : environ 7 000 lignes. Si le topic grossit au-delà de 10 000 messages en attente, le rattrapage se fait en plusieurs commits, chacun cohérent avec ses offsets.
 - **Je réexaminerai le choix de Kafka Connect** si le nombre de topics ou de tables augmente : un connecteur configuré remplace alors du code par table.
+
+### Correction de la volumétrie
+
+La première version de cet ADR estimait la croissance de la table à environ 35 000 lignes par an, soit une ligne par quart d'heure. Elle oubliait que le producteur republie toute la fenêtre de 3 heures à chaque rafraîchissement. Mesuré le 20 novembre 2026 : 14 lignes par rafraîchissement (médiane), et 6,1 versions par quart d'heure en moyenne depuis le 12 novembre, le cluster local n'étant pas allumé en continu. L'estimation corrigée est d'environ 490 000 lignes par an.
+
+Les décisions ne changent pas. Une année de temps réel pèserait de 15 à 30 Mo de Parquet, quand tout l'historique en occupe 13 Mo pour 514 272 lignes : la table reste non partitionnée, les statistiques min/max de `date_heure` suffisent à filtrer, et le compactage quotidien (ADR 013) regroupe les petits fichiers. La couche silver ne garde que la dernière version de chaque quart d'heure (ADR 012).
 
 ## Sources
 

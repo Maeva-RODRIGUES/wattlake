@@ -9,8 +9,10 @@ Exactly once: each append records, in the summary of its Iceberg snapshot, the
 next Kafka offset to read for every partition. Data and offsets are committed
 together or not at all, and the writer resumes from them (next_offsets).
 
-The table is not partitioned: about 35,000 rows a year, like the history table
-(see ingestion/src/wattlake_ingestion/bronze.py).
+The table is not partitioned: about 490,000 rows a year, as many as the whole
+history table (see ingestion/src/wattlake_ingestion/bronze.py). Each refresh
+publishes the 3-hour overlap window again, about 14 rows, so every quarter hour
+is written about a dozen times, once per version.
 """
 
 import json
