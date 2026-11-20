@@ -78,7 +78,7 @@ Un rafraîchissement est publié au plus 5 minutes après RTE, pour environ 8 60
 
 ## Conséquences
 
-- **La livraison est « au moins une fois »** : un même quart d'heure arrive plusieurs fois (fenêtre de recouvrement, cycle rejoué après une erreur). Le consommateur qui les écrit dans Iceberg (ADR 010) doit écrire par clé (un `MERGE` sur `date_heure`) et garder la version au `source_updated_at` le plus récent.
+- **La livraison est « au moins une fois »** : un même quart d'heure arrive plusieurs fois (fenêtre de recouvrement, cycle rejoué après une erreur). Le consommateur qui les écrit dans Iceberg doit garder la version au `source_updated_at` le plus récent. Cet ADR prévoyait pour cela une écriture par clé (un `MERGE` sur `date_heure`). L'ADR 010 a choisi à la place une table en ajout seul, qui garde toutes les versions : la dernière est retenue par la couche silver (ADR 012).
 - **Pas de trou après une panne.** Un cycle interrompu en cours de publication reprend depuis le dernier message livré, moins 3 heures. Une panne de l'API saute le cycle, et le suivant rattrape tout depuis le curseur.
 - **Une révision plus vieille que 3 heures n'est pas transmise.** Les corrections plus tardives arrivent avec les données consolidées, que le batch charge depuis l'historique.
 - **Le topic compacté est un miroir dédoublonné du jeu temps réel** : relu depuis le début, il redonne la dernière version de chaque quart d'heure, sans limite de durée. Le jeu ne grossit que d'environ 35 000 lignes par an.

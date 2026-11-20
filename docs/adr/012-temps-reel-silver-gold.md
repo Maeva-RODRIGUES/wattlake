@@ -58,7 +58,13 @@ Mesures faites sur les deux tables bronze, le 13 novembre 2026 :
 
 **Gold calcule l'énergie comme Σ puissance × `step_hours`.** `energy_mix_daily` compte les heures couvertes (`hours_with_data`) par rapport à la durée du jour (`expected_hours` : 23, 24 ou 25). `is_partial` signale le jour en cours (heure de Paris), et `renewable_share_monthly` le mois en cours.
 
-**Le test des jours incomplets ignore le jour partiel**, et rien d'autre. Si le flux s'arrête, la veille devient incomplète sans être partielle : le test échoue, et le Write-Audit-Publish (ADR 008) ne publie pas un gold qui la compterait comme complète.
+**Le test des jours incomplets n'ignore que les cas connus** ([assert_incomplete_days_are_known.sql](../../transform/tests/assert_incomplete_days_are_known.sql)) :
+
+- le jour partiel (`is_partial`), que le temps réel ne couvre que jusqu'à son dernier quart d'heure ;
+- chaque dimanche de passage à l'heure d'hiver (dernier dimanche d'octobre) : l'historique comme le temps réel omettent l'une des deux heures répétées (particularité 8 de [docs/sources.md](../sources.md)) ;
+- le 1ᵉʳ janvier 2026, dont la première demi-heure (00:00 à Paris, 23:00 UTC la veille) n'a pas de valeurs réalisées dans l'historique. Cette date est écrite en dur dans le test : une nouvelle lacune de la source fera échouer le test, et devra être examinée puis ajoutée à la liste.
+
+Si le flux s'arrête, la veille devient incomplète sans être partielle : le test échoue, et le Write-Audit-Publish (ADR 008) ne publie pas un gold qui la compterait comme complète.
 
 ## Conséquences
 

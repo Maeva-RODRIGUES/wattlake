@@ -60,6 +60,20 @@ La question est donc : comment fournir des secrets à un cluster piloté par Git
 - **En production**, je choisirais l'option D, avec le gestionnaire de secrets du cloud utilisé. Les manifestes du dépôt ne changeraient pas : ils référencent des noms de Secrets, que créerait l'opérateur External Secrets au lieu du script.
 - Je réexaminerai cette décision si la stack doit tourner ailleurs que sur un poste, ou si plusieurs personnes doivent partager les mêmes valeurs.
 
+### Mise à jour : des groupes de Secrets
+
+Le principe reste le même, mais `make secrets` ne crée plus seulement les cinq Secrets du tableau. Les ADR suivants en ont ajouté, et la règle du tout ou rien s'applique maintenant **par groupe** : les Secrets qui partagent une valeur forment un groupe, créé en entier ou pas du tout, et un groupe ajouté plus tard est créé sur un cluster existant sans toucher aux autres ([infra/secrets/create.sh](../../infra/secrets/create.sh)).
+
+| Groupe | Secrets | Ajouté par |
+| --- | --- | --- |
+| `stack` | les cinq Secrets du tableau ci-dessus | cet ADR |
+| `nessie-db` | `nessie-db-credentials` | ADR 007 |
+| `streaming` | `streaming-credentials` (identité S3 du writer) | ADR 010 |
+| `monitoring` | `grafana-admin`, dans le namespace `monitoring` | ADR 011 |
+| `nessie-gc` | `nessie-gc-credentials` (seule identité qui supprime des fichiers en masse) | ADR 013 |
+
+Les identités S3 ajoutées après coup (`streaming`, `nessie-gc`) sont insérées dans la configuration de SeaweedFS du groupe `stack` par `add_s3_identity.py`. Pour changer une valeur, il suffit donc de supprimer les Secrets de son groupe, et non plus les cinq, puis de relancer `make secrets` et de redémarrer les pods concernés.
+
 ## Sources
 
 - Kubernetes, Secrets : les Secrets sont stockés sans chiffrement par défaut dans etcd. https://kubernetes.io/docs/concepts/configuration/secret/
