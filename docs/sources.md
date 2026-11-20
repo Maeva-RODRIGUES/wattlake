@@ -30,10 +30,10 @@ Les dates de couverture sont exprimées en heure de Paris.
 Une même période passe par trois états successifs, indiqués par le champ `nature` :
 
 1. **Temps réel** : télémesures des ouvrages, complétées par des forfaits et des estimations.
-2. **Consolidées** : données vérifiées et complétées, livrées vers le milieu du mois suivant.
+2. **Consolidées** : données vérifiées et complétées. Le portail annonce une livraison vers le milieu du mois suivant, mais le retard constaté est de deux à trois mois : le 20 novembre 2026, le dernier mois publié est août 2026.
 3. **Définitives** : tous les partenaires ont transmis et vérifié leurs comptages, livraison au second semestre de l'année suivante.
 
-Une valeur déjà chargée peut donc changer quand elle passe d'un état au suivant. Le chargement doit pouvoir réécrire une période.
+Une valeur déjà chargée peut donc changer quand elle passe d'un état au suivant. Le chargement doit pouvoir réécrire une période : le DAG `eco2mix_history_refresh` recharge chaque semaine les 24 derniers mois (voir l'[ADR 015](adr/015-rechargement-historique.md)).
 
 Les deux jeux se suivent exactement : le temps réel commence au quart d'heure qui suit la dernière donnée consolidée. À la date de vérification, historique et temps réel se raccordent sans trou ni chevauchement.
 

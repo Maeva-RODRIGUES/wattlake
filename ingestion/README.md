@@ -45,6 +45,16 @@ Le DAG ([dags/eco2mix_history_to_bronze.py](dags/eco2mix_history_to_bronze.py)) 
 - **Une exécution à la fois** : deux mois écrits en même temps dans la table entreraient en conflit dans Nessie.
 - **Une seule tâche par mois** : téléchargement de l'export, puis chargement dans bronze, avec deux nouvelles tentatives.
 - **Asset de la table bronze** : chaque chargement qui écrit des lignes met à jour l'Asset `bronze.eco2mix_national_history`, ce qui déclenche le DAG `dbt_transformations`. Un mois vide termine la tâche à l'état « skipped » : aucun événement n'est émis, et dbt n'est pas relancé pour rien.
+- **Un seul passage par mois** : un mois encore absent de la source au 1er du mois suivant, ou révisé plus tard, n'est jamais repris par ce DAG. C'est le rôle de `eco2mix_history_refresh`.
+
+## DAG `eco2mix_history_refresh`
+
+Le DAG ([dags/eco2mix_history_refresh.py](dags/eco2mix_history_refresh.py)) recharge chaque dimanche à 04:00, heure de Paris, les 24 derniers mois complets ([ADR 015](../docs/adr/015-rechargement-historique.md)). RTE publie les données consolidées avec deux à trois mois de retard, puis les définitives l'année suivante (voir [docs/sources.md](../docs/sources.md)).
+
+- **Une tâche par mois** (`refresh_month`, *dynamic task mapping*), une à la fois, du plus ancien au plus récent.
+- **N'écrit que les mois modifiés** : `load_period(..., skip_unchanged=True)` relit le mois dans la table et le compare à l'export, colonnes de la source seulement et sans tenir compte de l'ordre. Un mois inchangé ou pas encore publié se termine à l'état « skipped », sans commit Nessie ni événement d'Asset.
+- **Un mois modifié est remplacé** comme dans le DAG mensuel, et met à jour l'Asset de la table bronze, ce qui déclenche `dbt_transformations`.
+- **Pas d'exclusion entre les deux DAG** : s'ils écrivent dans la table en même temps, Nessie refuse l'un des commits et sa tâche est relancée.
 
 ## DAG `dbt_transformations`
 
@@ -66,7 +76,7 @@ Après un test en échec, `main` reste inchangé et la branche `audit` garde le 
 - **dbt isolé** : dbt tourne dans son propre environnement virtuel de l'image (`/opt/dbt/venv`), installé depuis `transform/requirements.txt`. Ses versions figées diffèrent des contraintes d'Airflow pour 26 paquets communs : les deux ne peuvent pas partager un environnement.
 - **Projet dbt dans l'image** : le projet et ses paquets (`dbt deps`, exécuté à la construction) sont copiés dans `/opt/wattlake/transform`. Les fichiers produits par dbt (`target/`, `logs/`) vont dans `/tmp/dbt`.
 - **Même profil qu'en local** : la tâche fixe `TRINO_HOST` et `TRINO_PORT` sur le service Trino du cluster.
-- Le nom et l'URI de l'Asset sont définis dans `wattlake_ingestion.lakehouse`, module sans import lourd, que les deux DAG importent.
+- Le nom et l'URI de l'Asset sont définis dans `wattlake_ingestion.lakehouse`, module sans import lourd, que les DAG importent.
 
 Le catalogue `wattlake` est configuré par les variables d'environnement `PYICEBERG_CATALOG__WATTLAKE__*`, définies dans `infra/airflow/values.yaml`. Les clés S3 sont celles de l'identité SeaweedFS `airflow`, lues dans le Secret `airflow-credentials` (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)).
 

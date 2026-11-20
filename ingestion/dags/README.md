@@ -3,6 +3,7 @@
 DAG Airflow de WattLake. Ce dossier est copié dans l'image Airflow personnalisée (`ingestion/Dockerfile`), dans `/opt/airflow/dags`, le dossier lu par le dag-processor.
 
 - `eco2mix_history_to_bronze` : charge l'historique dans la couche bronze, mois par mois.
+- `eco2mix_history_refresh` : recharge chaque semaine les 24 derniers mois de l'historique, en n'écrivant que les mois que RTE a publiés ou révisés depuis.
 - `dbt_transformations` : construit les couches silver et gold avec dbt, toutes les heures et chaque fois que la table bronze de l'historique change (Asset).
 - `iceberg_maintenance` : compacte chaque jour les fichiers des deux tables bronze (`optimize` de Trino, par une macro dbt), puis lance Nessie GC dans un Job Kubernetes.
 

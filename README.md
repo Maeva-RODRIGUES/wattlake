@@ -124,6 +124,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 - [x] Temps réel raccordé à silver et gold, rafraîchis toutes les heures (ADR 012)
 - [x] Maintenance des tables Iceberg : compactage et nettoyage par Nessie GC, chaque jour (ADR 013)
 - [x] DNS de secours pour les noms externes après un changement de réseau (ADR 014)
+- [x] Rechargement hebdomadaire de l'historique récent, pour les données consolidées et définitives publiées en retard (ADR 015)
 
 ## Démarrer
 
@@ -197,7 +198,7 @@ Le smoke test crée une table Iceberg depuis Trino, la relit, vérifie que ses f
 
 ### Charger les données et lancer les transformations
 
-Sur un cluster neuf, les trois DAG d'Airflow sont en pause, comme tout nouveau DAG. Les activer lance la chaîne complète, puis la maintenance quotidienne des tables (compactage, ADR 013) :
+Sur un cluster neuf, les quatre DAG d'Airflow sont en pause, comme tout nouveau DAG. Les activer lance la chaîne complète, puis le rechargement hebdomadaire de l'historique récent (ADR 015) et la maintenance quotidienne des tables (compactage, ADR 013) :
 
 ```bash
 kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
@@ -206,9 +207,11 @@ kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler
   airflow dags unpause eco2mix_history_to_bronze
 kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
   airflow dags unpause iceberg_maintenance
+kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
+  airflow dags unpause eco2mix_history_refresh
 ```
 
-Le DAG `eco2mix_history_to_bronze` rattrape alors l'historique mois par mois depuis janvier 2012, en quelques minutes. Chaque mois chargé met à jour l'Asset de la table bronze, ce qui déclenche `dbt_transformations` : silver et gold sont reconstruites et les tests lancés. Les détails sont dans [ingestion/README.md](ingestion/README.md) et [transform/README.md](transform/README.md).
+Le DAG `eco2mix_history_to_bronze` rattrape alors l'historique mois par mois depuis janvier 2012, en quelques minutes. Chaque mois chargé met à jour l'Asset de la table bronze, ce qui déclenche `dbt_transformations` : silver et gold sont reconstruites et les tests lancés. Ensuite, chaque dimanche, `eco2mix_history_refresh` recharge les 24 derniers mois, pour prendre les données consolidées et définitives que RTE publie avec plusieurs mois de retard. Les détails sont dans [ingestion/README.md](ingestion/README.md) et [transform/README.md](transform/README.md).
 
 ### Interroger la stack
 
@@ -308,6 +311,7 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 012 : raccordement du temps réel aux couches silver et gold](docs/adr/012-temps-reel-silver-gold.md), ou pourquoi une seule table silver avec l'historique prioritaire, et des énergies calculées selon le pas de temps de chaque ligne.
 - [ADR 013 : maintenance des tables Iceberg](docs/adr/013-maintenance-iceberg.md), ou pourquoi l'`optimize` de Trino pour le compactage et Nessie GC plutôt que `expire_snapshots` pour le nettoyage, avec 7 jours de rétention.
 - [ADR 014 : DNS de secours pour les noms externes](docs/adr/014-dns-de-secours.md), ou pourquoi des blocs de zone dans `coredns-custom`, avec le DNS local d'abord et des DNS publics en secours, plutôt que de recréer le cluster avec un autre CoreDNS.
+- [ADR 015 : rechargement de l'historique récent](docs/adr/015-rechargement-historique.md), ou pourquoi un DAG hebdomadaire qui recharge les 24 derniers mois en n'écrivant que les mois modifiés, plutôt que de relancer les exécutions `skipped` du DAG mensuel.
 
 ## Limites et suites possibles
 

@@ -18,6 +18,7 @@ from wattlake_ingestion.bronze import (
     load_export_file,
     load_period,
     prepare_batch,
+    recent_months,
 )
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -125,6 +126,79 @@ class TestLoadPeriod:
 
         with pytest.raises(ValueError, match="timezone-aware"):
             load_period(catalog, batch, datetime(2026, 8, 1), datetime(2026, 9, 1))
+
+
+class TestSkipUnchanged:
+    def test_an_identical_period_writes_nothing(self, catalog: Catalog) -> None:
+        load_period(catalog, prepare_batch(export_rows(AUGUST[0], 48), DATASET, INGESTED_AT), *AUGUST)
+        snapshot = catalog.load_table(BRONZE_TABLE).current_snapshot()
+
+        # Same source rows, in another order and loaded later.
+        rows = export_rows(AUGUST[0], 48)
+        again = prepare_batch(rows.take(list(range(47, -1, -1))), DATASET, INGESTED_AT + timedelta(days=7))
+
+        assert load_period(catalog, again, *AUGUST, skip_unchanged=True) == 0
+        assert catalog.load_table(BRONZE_TABLE).current_snapshot() == snapshot
+
+    def test_a_revised_period_is_replaced(self, catalog: Catalog) -> None:
+        load_period(catalog, prepare_batch(export_rows(AUGUST[0], 48, consommation=1), DATASET, INGESTED_AT), *AUGUST)
+
+        revised = prepare_batch(export_rows(AUGUST[0], 48, consommation=2), DATASET, INGESTED_AT)
+
+        assert load_period(catalog, revised, *AUGUST, skip_unchanged=True) == 48
+        assert set(bronze_rows(catalog)["consommation"].to_pylist()) == {2}
+
+    def test_a_nature_change_alone_is_a_revision(self, catalog: Catalog) -> None:
+        load_period(catalog, prepare_batch(export_rows(AUGUST[0], 4), DATASET, INGESTED_AT), *AUGUST)
+
+        rows = export_rows(AUGUST[0], 4)
+        final = rows.set_column(rows.schema.get_field_index("nature"), "nature", pa.array(["Données définitives"] * 4))
+
+        assert load_period(catalog, prepare_batch(final, DATASET, INGESTED_AT), *AUGUST, skip_unchanged=True) == 4
+        assert set(bronze_rows(catalog)["nature"].to_pylist()) == {"Données définitives"}
+
+    def test_a_duplicated_row_is_a_revision(self, catalog: Catalog) -> None:
+        # Same set of rows but not the same multiset: duplicates count.
+        rows = export_rows(AUGUST[0], 4)
+        load_period(catalog, prepare_batch(rows, DATASET, INGESTED_AT), *AUGUST)
+
+        doubled = pa.concat_tables([rows.slice(0, 3), rows.slice(0, 1)])
+
+        assert load_period(catalog, prepare_batch(doubled, DATASET, INGESTED_AT), *AUGUST, skip_unchanged=True) == 4
+
+    def test_a_month_not_loaded_yet_is_written(self, catalog: Catalog) -> None:
+        load_period(catalog, prepare_batch(export_rows(JULY[0], 10), DATASET, INGESTED_AT), *JULY)
+
+        batch = prepare_batch(export_rows(AUGUST[0], 10), DATASET, INGESTED_AT)
+
+        assert load_period(catalog, batch, *AUGUST, skip_unchanged=True) == 10
+        assert bronze_rows(catalog).num_rows == 20
+
+
+class TestRecentMonths:
+    def test_returns_the_full_months_before_the_reference_oldest_first(self) -> None:
+        months = recent_months(datetime(2026, 11, 22, 4, tzinfo=PARIS), 3)
+
+        assert months == [
+            (datetime(2026, 8, 1, tzinfo=PARIS), datetime(2026, 9, 1, tzinfo=PARIS)),
+            (datetime(2026, 9, 1, tzinfo=PARIS), datetime(2026, 10, 1, tzinfo=PARIS)),
+            (datetime(2026, 10, 1, tzinfo=PARIS), datetime(2026, 11, 1, tzinfo=PARIS)),
+        ]
+
+    def test_crosses_years_and_follows_the_reference_timezone(self) -> None:
+        months = recent_months(datetime(2026, 1, 1, 0, 30, tzinfo=PARIS), 24)
+
+        assert len(months) == 24
+        assert months[0] == (datetime(2024, 1, 1, tzinfo=PARIS), datetime(2024, 2, 1, tzinfo=PARIS))
+        assert months[-1] == (datetime(2025, 12, 1, tzinfo=PARIS), datetime(2026, 1, 1, tzinfo=PARIS))
+        # December 2025 starts at 23:00 UTC the day before, as RTE's months do.
+        assert months[-1][0].astimezone(UTC) == datetime(2025, 11, 30, 23, tzinfo=UTC)
+
+    def test_rejects_naive_references_and_empty_windows(self) -> None:
+        with pytest.raises(ValueError, match="timezone-aware"):
+            recent_months(datetime(2026, 11, 22), 3)
+        with pytest.raises(ValueError, match="positive"):
+            recent_months(datetime(2026, 11, 22, tzinfo=PARIS), 0)
 
 
 class TestLoadExportFile:

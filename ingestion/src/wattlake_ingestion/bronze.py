@@ -102,11 +102,41 @@ def prepare_batch(rows: pa.Table, source_dataset: str, ingested_at: datetime) ->
     )
 
 
-def load_period(catalog: Catalog, batch: pa.Table, start: datetime, end: datetime) -> int:
+def recent_months(reference: datetime, count: int) -> list[tuple[datetime, datetime]]:
+    """Return the count full calendar months before reference's month, oldest first.
+
+    Months are in reference's timezone (Paris for RTE), as [start, end) pairs:
+    the month of reference itself is excluded, the history never contains it.
+    """
+    if reference.tzinfo is None:
+        raise ValueError("reference must be a timezone-aware datetime")
+    if count < 1:
+        raise ValueError(f"count must be positive, got {count}")
+    tz = reference.tzinfo
+    year, month = reference.year, reference.month
+    months = []
+    for _ in range(count):
+        end = datetime(year, month, 1, tzinfo=tz)
+        year, month = (year - 1, 12) if month == 1 else (year, month - 1)
+        months.append((datetime(year, month, 1, tzinfo=tz), end))
+    return months[::-1]
+
+
+def load_period(
+    catalog: Catalog,
+    batch: pa.Table,
+    start: datetime,
+    end: datetime,
+    *,
+    skip_unchanged: bool = False,
+) -> int:
     """Replace the rows of [start, end) in the bronze table with batch, in one commit.
 
     An empty batch writes nothing: an empty answer from the source must never
-    erase a period that is already loaded. Returns the number of rows written.
+    erase a period that is already loaded. With skip_unchanged, a batch whose
+    source columns match the rows already loaded writes nothing either, so that
+    a periodic reload does not add a Nessie commit, and a dbt run, for nothing.
+    Returns the number of rows written.
     """
     if start.tzinfo is None or end.tzinfo is None:
         raise ValueError("start and end must be timezone-aware datetimes")
@@ -123,13 +153,13 @@ def load_period(catalog: Catalog, batch: pa.Table, start: datetime, end: datetim
         raise ValueError(f"batch has rows outside [{start}, {end}) or without date_heure")
 
     table = _bronze_table(catalog)
-    table.overwrite(
-        batch,
-        overwrite_filter=And(
-            GreaterThanOrEqual("date_heure", start.astimezone(UTC).isoformat()),
-            LessThan("date_heure", end.astimezone(UTC).isoformat()),
-        ),
+    period = And(
+        GreaterThanOrEqual("date_heure", start.astimezone(UTC).isoformat()),
+        LessThan("date_heure", end.astimezone(UTC).isoformat()),
     )
+    if skip_unchanged and _same_source_rows(table.scan(row_filter=period).to_arrow(), batch):
+        return 0
+    table.overwrite(batch, overwrite_filter=period)
     return batch.num_rows
 
 
@@ -140,13 +170,32 @@ def load_export_file(
     start: datetime,
     end: datetime,
     ingested_at: datetime,
+    *,
+    skip_unchanged: bool = False,
 ) -> int:
     """Load a Parquet export of [start, end) into the bronze table. Returns the rows written."""
     rows = pq.read_table(export)
     if rows.num_rows == 0:
         # Checked before the schema: an empty export may not list every column.
         return 0
-    return load_period(catalog, prepare_batch(rows, source_dataset, ingested_at), start, end)
+    batch = prepare_batch(rows, source_dataset, ingested_at)
+    return load_period(catalog, batch, start, end, skip_unchanged=skip_unchanged)
+
+
+def _same_source_rows(loaded: pa.Table, batch: pa.Table) -> bool:
+    """Whether two tables hold the same source rows, ignoring order and technical columns.
+
+    The rows are compared as multisets: the source has duplicate date_heure
+    values (spring DST artefacts, see docs/sources.md), so every column is a
+    sort key. A month is about 3,000 rows: reading it back costs little.
+    """
+    if loaded.num_rows != batch.num_rows:
+        return False
+    keys = [(name, "ascending") for name in SOURCE_SCHEMA.names]
+    # The scan may return other Arrow types (large_string): cast before comparing.
+    loaded = loaded.select(SOURCE_SCHEMA.names).cast(SOURCE_SCHEMA).sort_by(keys)
+    batch = batch.select(SOURCE_SCHEMA.names).cast(SOURCE_SCHEMA).sort_by(keys)
+    return loaded.equals(batch)
 
 
 def _bronze_table(catalog: Catalog) -> Table:
