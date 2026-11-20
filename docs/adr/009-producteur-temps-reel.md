@@ -7,7 +7,7 @@
 
 Le jeu éCO2mix temps réel (`eco2mix-national-tr`, voir [docs/sources.md](../sources.md)) couvre les mesures depuis le 1ᵉʳ septembre et les prévisions jusqu'au lendemain. Il est rafraîchi tous les quarts d'heure, et la dernière mesure a environ 15 minutes de retard. Le chargement batch s'arrête au 31 août, avec l'historique consolidé : rien dans le lac ne couvre la période depuis.
 
-L'étape 5 fait passer ces données par Kafka (déployé à l'étape 5.1) avant de les écrire dans Iceberg (étape 5.3). Cet ADR fixe comment elles entrent dans Kafka. L'outil qui les écrira dans Iceberg fera l'objet de son propre ADR.
+Le flux temps réel fait passer ces données par Kafka, déployé avec l'opérateur Strimzi, avant de les écrire dans Iceberg. Cet ADR fixe comment elles entrent dans Kafka. L'outil qui les écrira dans Iceberg fera l'objet de son propre ADR.
 
 Contraintes de la source :
 
@@ -21,7 +21,7 @@ Contraintes de la source :
 1. **Rien de perdu** : un redémarrage du producteur ou de Kafka ne laisse pas de trou.
 2. **Révisions transmises** : une valeur corrigée par RTE arrive dans le flux.
 3. **Peu de pièces** : pas de base d'état ni de composant de plus à exploiter.
-4. **Format lisible et stable** pour le consommateur de l'étape 5.3.
+4. **Format lisible et stable** pour le consommateur qui les écrira dans Iceberg (ADR 010).
 5. **Quota respecté**, avec de la marge.
 
 ## Options étudiées
@@ -78,7 +78,7 @@ Un rafraîchissement est publié au plus 5 minutes après RTE, pour environ 8 60
 
 ## Conséquences
 
-- **La livraison est « au moins une fois »** : un même quart d'heure arrive plusieurs fois (fenêtre de recouvrement, cycle rejoué après une erreur). Le consommateur de l'étape 5.3 doit écrire par clé (un `MERGE` sur `date_heure`) et garder la version au `source_updated_at` le plus récent.
+- **La livraison est « au moins une fois »** : un même quart d'heure arrive plusieurs fois (fenêtre de recouvrement, cycle rejoué après une erreur). Le consommateur qui les écrit dans Iceberg (ADR 010) doit écrire par clé (un `MERGE` sur `date_heure`) et garder la version au `source_updated_at` le plus récent.
 - **Pas de trou après une panne.** Un cycle interrompu en cours de publication reprend depuis le dernier message livré, moins 3 heures. Une panne de l'API saute le cycle, et le suivant rattrape tout depuis le curseur.
 - **Une révision plus vieille que 3 heures n'est pas transmise.** Les corrections plus tardives arrivent avec les données consolidées, que le batch charge depuis l'historique.
 - **Le topic compacté est un miroir dédoublonné du jeu temps réel** : relu depuis le début, il redonne la dernière version de chaque quart d'heure, sans limite de durée. Le jeu ne grossit que d'environ 35 000 lignes par an.

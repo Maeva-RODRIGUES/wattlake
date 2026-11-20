@@ -17,7 +17,7 @@ Le portail publie cinq jeux éCO2mix : national et régional, chacun en version 
 | | Historique | Temps réel |
 | --- | --- | --- |
 | Identifiant | [`eco2mix-national-cons-def`](https://odre.opendatasoft.com/explore/dataset/eco2mix-national-cons-def/) | [`eco2mix-national-tr`](https://odre.opendatasoft.com/explore/dataset/eco2mix-national-tr/) |
-| Rôle dans WattLake | Chargement batch de l'historique dans bronze (étape 2) | Flux temps réel (étape 5) |
+| Rôle dans WattLake | Chargement batch de l'historique dans bronze | Flux temps réel |
 | Couverture | Du 1ᵉʳ janvier 2012 au 31 août 2026 | Du 1ᵉʳ septembre 2026 au lendemain (J+1) |
 | Volume | 514 272 lignes | 6 336 lignes, fenêtre glissante |
 | Rafraîchissement | Une fois par jour | Tous les quarts d'heure |

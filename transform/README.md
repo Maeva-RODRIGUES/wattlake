@@ -7,12 +7,12 @@ Projet dbt (adaptateur Trino) qui construit les couches silver et gold à partir
 ```bash
 make dbt ARGS="debug"                        # configuration et connexion à Trino
 make dbt ARGS="ls --resource-type source"    # sources déclarées
-make dbt ARGS="build"                        # modèles et tests (à partir de l'étape 3.2)
+make dbt ARGS="build"                        # modèles et tests
 ```
 
 La cible crée au besoin `transform/.venv` avec [uv](https://docs.astral.sh/uv/), en Python 3.13.13 comme l'image Airflow, à partir de `requirements.txt`. Elle lance ensuite dbt par [run.sh](run.sh), qui ouvre une redirection de port temporaire vers le service Trino du cluster (port local 18081), puis la referme à la fin, même en cas d'erreur.
 
-- **Profil versionné** : [profiles.yml](profiles.yml) est dans le projet, passé à dbt par `--profiles-dir`, plutôt que dans `~/.dbt`. L'hôte et le port viennent des variables `TRINO_HOST` et `TRINO_PORT`, ce qui permettra d'utiliser le même profil depuis Airflow (étape 3.5).
+- **Profil versionné** : [profiles.yml](profiles.yml) est dans le projet, passé à dbt par `--profiles-dir`, plutôt que dans `~/.dbt`. L'hôte et le port viennent des variables `TRINO_HOST` et `TRINO_PORT`, ce qui permet d'utiliser le même profil depuis Airflow.
 - **Deux cibles** : `dev` (par défaut) écrit dans le catalogue Trino `iceberg`, donc directement sur la branche `main` ; `audit` écrit dans `iceberg_audit`, sur la branche `audit`, celle du Write-Audit-Publish. La source bronze suit la cible. `make dbt ARGS="build --target audit"` teste un build sans toucher `main`, si la branche `audit` existe.
 - **Source** : la table bronze est déclarée dans [models/bronze/sources.yml](models/bronze/sources.yml). Ses particularités, dont les 60 lignes artificielles du passage à l'heure d'été, sont décrites dans [docs/sources.md](../docs/sources.md).
 - **Statistiques d'usage désactivées** (`send_anonymous_usage_stats: false`), et vérification des certificats activée dès maintenant (`require_certificate_validation: true`). `dbt debug` affiche encore l'avertissement sur les certificats, car il teste la connexion avant de lire les réglages du projet. Les autres commandes ne l'affichent plus.
@@ -41,7 +41,7 @@ La CI lance `make dbt-parse` : `dbt deps` puis `dbt parse`, sans base de donnée
 
 Depuis dbt 1.8, dbt-core et les adaptateurs sont publiés séparément et communiquent par le paquet `dbt-adapters` : leurs versions mineures n'ont plus à correspondre. dbt-trino 1.10.6 déclare accepter `dbt-core>=1.8,<2.0`.
 
-**Validation de la combinaison** : dbt-core 1.12 et dbt-trino 1.10 n'ont pas forcément été testés ensemble par leurs mainteneurs. À l'étape 3.1, `dbt debug`, `dbt parse`, `dbt ls` et `dbt show` ont validé la connexion et l'exécution de requêtes. À l'étape 3.2, le premier `dbt build` a validé la matérialisation, le 6 novembre 2026 :
+**Validation de la combinaison** : dbt-core 1.12 et dbt-trino 1.10 n'ont pas forcément été testés ensemble par leurs mainteneurs. `dbt debug`, `dbt parse`, `dbt ls` et `dbt show` ont d'abord validé la connexion et l'exécution de requêtes, puis le premier `dbt build` a validé la matérialisation, le 6 novembre 2026 :
 
 - création du schéma `iceberg.silver` et de la table `eco2mix_national` (514 212 lignes, en 5 secondes), puis exécution des tests `unique` et `not_null` ;
 - second `dbt build` : table remplacée par un `create or replace table` atomique, avec le même résultat, en un seul commit Nessie.
@@ -92,7 +92,7 @@ Contrôle croisé avec le Bilan électrique 2024 de RTE (chiffres provisionnels)
 
 `make dbt ARGS="build"` construit chaque modèle puis lance ses tests : un test en échec arrête les modèles qui en dépendent.
 
-- **Paquet `dbt_utils` 1.4.1**, déclaré dans [packages.yml](packages.yml) et figé dans [package-lock.yml](package-lock.yml). Il s'installe avec `make dbt ARGS="deps"`, dans `dbt_packages/` (ignoré par Git). À l'étape 3.5, il faudra l'installer au moment de construire l'image, pas à chaque exécution.
+- **Paquet `dbt_utils` 1.4.1**, déclaré dans [packages.yml](packages.yml) et figé dans [package-lock.yml](package-lock.yml). Il s'installe avec `make dbt ARGS="deps"`, dans `dbt_packages/` (ignoré par Git). Dans l'image Airflow, il est installé à la construction ([ingestion/Dockerfile](../ingestion/Dockerfile)), pas à chaque exécution.
 - **Tests de données** (44), dans `_silver.yml` et `_gold.yml`, tous en sévérité `error`. Chaque seuil vient d'une mesure sur les données, rappelée en commentaire : pompage et charge des batteries toujours ≤ 0, production ≥ 0 sauf solaire, charbon et turbinage des STEP (≥ -200 MW, consommations auxiliaires jusqu'en 2020), consommation entre 20 000 et 120 000 MW, intensité CO₂ entre 0 et 500 g/kWh, parts entre 0 et 1, part stricte ≤ part large et nulle exactement avant 2013, aucun jour manquant, production égale à la somme des huit filières.
 - **Tests SQL dédiés**, dans [tests/](tests/) : les journées incomplètes se limitent aux cas connus (le jour en cours compris), et les sommes mensuelles égalent celles des jours.
 - **Tests unitaires** (3) : le SQL des modèles exécuté sur des lignes simulées, sans lire les tables. Le premier vérifie qu'une ligne artificielle de mars est écartée et que `ND` devient `NULL`. Le deuxième, que la dernière version temps réel d'un quart d'heure est gardée et que l'historique l'emporte sur le temps réel. Le troisième, que les parts sont des ratios de sommes (0,6 et non la moyenne 0,54), que la part stricte vaut `NULL` sans détail par technologie, et qu'un quart d'heure temps réel compte pour 0,25 h. Pour vérifier qu'ils détectent une régression, on a retiré le filtre de dédoublonnage, puis forcé la part stricte inconnue à 0 : chaque erreur a fait échouer le test prévu.
@@ -111,6 +111,6 @@ Journées incomplètes : chaque dimanche de passage à l'heure d'hiver (l'histor
 Le module d'ingestion utilise un autre mécanisme : un `pyproject.toml` qui épingle ses dépendances directes, installé avec le fichier de contraintes d'Airflow 3.2.2. La différence est voulue :
 
 - **La référence des versions n'est pas la même.** Le paquet d'ingestion s'installe dans l'image Airflow : ses dépendances transitives doivent être celles d'Airflow, et le fichier de contraintes d'Airflow fait foi. dbt n'est pas couvert par ces contraintes, et ses dépendances risquent même d'entrer en conflit avec elles. Il lui faut son propre fichier de versions figées.
-- **`transform/` n'est pas un paquet Python.** C'est un projet dbt, sans code à construire. Un `requirements.txt` s'installe avec n'importe quel `pip`, y compris dans une image sans uv (étape 3.5). Un `uv.lock` demanderait uv ou une conversion.
+- **`transform/` n'est pas un paquet Python.** C'est un projet dbt, sans code à construire. Un `requirements.txt` s'installe avec n'importe quel `pip`, y compris dans une image sans uv, comme l'image Airflow. Un `uv.lock` demanderait uv ou une conversion.
 
-Limite connue de l'ingestion : les dépendances transitives absentes des contraintes d'Airflow, comme celles de PyIceberg (`strictyaml`, `pyroaring`, `mmh3`), n'y sont pas figées. C'est un point à traiter avec l'intégration continue (étape 4.2).
+Limite connue de l'ingestion : les dépendances transitives absentes des contraintes d'Airflow, comme celles de PyIceberg (`strictyaml`, `pyroaring`, `mmh3`), n'y sont pas figées. Elles le sont par [ingestion/constraints.txt](../ingestion/constraints.txt), en plus des contraintes d'Airflow.

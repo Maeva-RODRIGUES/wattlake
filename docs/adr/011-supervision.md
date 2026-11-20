@@ -11,7 +11,7 @@ Jusqu'ici, rien n'est collecté :
 - les logs ne sont lisibles qu'avec `kubectl logs`, et disparaissent quand un pod est recréé ;
 - les problèmes rencontrés (redémarrages du dag-processor, pannes DNS) se sont diagnostiqués à la main.
 
-L'étape 6.1 ajoute des métriques et des logs centralisés.
+La stack a besoin de métriques et de logs centralisés.
 
 Ce que les composants exposent déjà, vérifié dans le cluster :
 

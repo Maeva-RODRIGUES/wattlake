@@ -20,7 +20,7 @@ C'est la même situation que celle décrite dans l'ADR 001 pour MinIO : un compo
 1. **Maintenance** : une image qui reçoit des correctifs de sécurité.
 2. **Reproductibilité** : une image officielle, à une version épinglée.
 3. **Simplicité** : peu de composants supplémentaires sur un cluster local.
-4. **Réutilisation** : pouvoir accueillir aussi le stockage persistant de Nessie (étape 4.5).
+4. **Réutilisation** : pouvoir accueillir aussi le stockage persistant de Nessie (fait par l'ADR 007).
 
 ## Options étudiées
 
@@ -39,9 +39,9 @@ La version majeure 17 est supportée par Airflow 3.2.2 comme par la version 3.3,
 
 ## Conséquences
 
-- La base vit indépendamment d'Airflow : réinstaller Airflow ne touche pas aux métadonnées, et Nessie pourra y avoir sa propre base et son propre utilisateur à l'étape 4.5.
+- La base vit indépendamment d'Airflow : réinstaller Airflow ne touche pas aux métadonnées, et Nessie pourra y avoir sa propre base et son propre utilisateur (ADR 007).
 - Les montées de version de PostgreSQL et les sauvegardes sont à ma charge. Sur un cluster local, je n'en prévois pas.
-- Les identifiants sont des valeurs de développement jusqu'à l'étape 4.4, comme pour les autres composants.
+- Les identifiants sont des valeurs de développement, comme pour les autres composants, jusqu'au passage aux Secrets (ADR 006).
 - En production, je réévaluerais CloudNativePG ou un service PostgreSQL managé, pour la haute disponibilité et les sauvegardes.
 
 ## Sources

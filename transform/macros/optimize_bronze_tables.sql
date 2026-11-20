@@ -11,7 +11,7 @@
 
     The tables are read from the target's catalog: --target dev compacts main,
     where the writer appends. Old files stay in the storage until Nessie GC
-    removes them (step 8.2).
+    removes them (run_nessie_gc in iceberg_maintenance).
 -#}
 {% macro optimize_bronze_tables(file_size_threshold='64MB') %}
     {% for table in ['eco2mix_national_history', 'eco2mix_national_realtime'] %}

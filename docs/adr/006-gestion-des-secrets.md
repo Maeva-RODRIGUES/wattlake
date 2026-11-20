@@ -5,13 +5,13 @@
 
 ## Contexte
 
-Jusqu'à l'étape 4.3, les identifiants de la stack étaient des valeurs de développement écrites en clair dans le dépôt :
+Jusqu'au passage à Argo CD, les identifiants de la stack étaient des valeurs de développement écrites en clair dans le dépôt :
 
 - les clés S3 de SeaweedFS, partagées par Trino, Nessie et Airflow sous une même identité `admin` ;
 - les mots de passe PostgreSQL (superutilisateur et rôle `airflow`) ;
 - les clés d'Airflow (Fernet, API, JWT) et le mot de passe de son interface.
 
-Depuis l'étape 4.3, Argo CD déploie la stack depuis la branche `main` : Git est la source de vérité du cluster. Or un Secret Kubernetes n'est qu'un encodage base64, sans chiffrement. Écrit dans Git, même dans un fichier YAML de type `Secret`, il est lisible par quiconque lit le dépôt, ici public.
+Depuis le passage à Argo CD, la stack est déployée depuis la branche `main` : Git est la source de vérité du cluster. Or un Secret Kubernetes n'est qu'un encodage base64, sans chiffrement. Écrit dans Git, même dans un fichier YAML de type `Secret`, il est lisible par quiconque lit le dépôt, ici public.
 
 La question est donc : comment fournir des secrets à un cluster piloté par Git, sans les mettre en clair dans Git ?
 

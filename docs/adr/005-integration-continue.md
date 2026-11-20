@@ -7,7 +7,7 @@
 
 Le dépôt est public et hébergé sur GitHub : c'est là que je développe, et là qu'un lecteur consulte le projet.
 
-L'étape 4.2 met en place une intégration continue qui devra :
+Le projet a besoin d'une intégration continue qui devra :
 
 - vérifier le style du code (lint) ;
 - lancer les tests Python de l'ingestion, qui n'ont besoin ni du réseau ni du cluster ;
@@ -16,7 +16,7 @@ L'étape 4.2 met en place une intégration continue qui devra :
 
 Le projet a aussi deux contraintes. Les versions sont épinglées, et je n'adopte une version qu'au moins deux semaines après sa publication : un outil de mise à jour automatique des dépendances doit respecter ce délai. Ensuite, certaines dépendances transitives de l'ingestion, absentes des contraintes d'Airflow, ne sont pas figées (voir `transform/README.md`) : la CI doit pouvoir les surveiller.
 
-Cet ADR choisit la plateforme. Le contenu exact des jobs est l'objet de l'étape 4.2.
+Cet ADR choisit la plateforme. Le contenu exact des jobs est décrit dans le workflow ([.github/workflows/ci.yml](../../.github/workflows/ci.yml)).
 
 ## Critères
 
@@ -48,9 +48,9 @@ Cet ADR choisit la plateforme. Le contenu exact des jobs est l'objet de l'étape
 ## Conséquences
 
 - La CI se lit dans le dépôt lui-même : onglet Actions, statut des pull requests, badge dans le README.
-- Dependabot ne connaît pas les versions épinglées dans le `Makefile` (charts Helm, version de Python) ni dans les fichiers de valeurs Helm. Il faudra les surveiller autrement : Renovate, dont l'option `minimumReleaseAge` joue le même rôle que `cooldown` et qui sait lire ces fichiers par expressions régulières, ou une revue manuelle. Le choix se fera à l'étape 4.2.
-- Valider dbt jusqu'au `dbt build` en CI demanderait un Trino avec un catalogue Iceberg dans un conteneur de service. C'est possible sur les runners Linux, mais à évaluer à l'étape 4.2 face à une validation limitée à `dbt parse` et `dbt compile`.
-- L'image Airflow construite en CI aura un tag tiré du commit, ce qui préparera le déploiement GitOps de l'étape 4.3.
+- Dependabot ne connaît pas les versions épinglées dans le `Makefile` (charts Helm, version de Python) ni dans les fichiers de valeurs Helm. Il faudra les surveiller autrement : Renovate, dont l'option `minimumReleaseAge` joue le même rôle que `cooldown` et qui sait lire ces fichiers par expressions régulières, ou une revue manuelle. Le choix se fera à la mise en place des jobs.
+- Valider dbt jusqu'au `dbt build` en CI demanderait un Trino avec un catalogue Iceberg dans un conteneur de service. C'est possible sur les runners Linux, mais à évaluer à la mise en place des jobs face à une validation limitée à `dbt parse` et `dbt compile`.
+- L'image Airflow construite en CI aura un tag tiré du commit, ce qui préparera le déploiement GitOps par Argo CD.
 - Je réexaminerai cette décision si le dépôt doit quitter GitHub, ou si les conditions de gratuité des runners ou du registre changent.
 
 ## Sources

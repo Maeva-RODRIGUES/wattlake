@@ -17,7 +17,7 @@ env/
 .coverage
 htmlcov/
 
-# dbt artifacts (used from step 3)
+# dbt artifacts
 target/
 dbt_packages/
 logs/

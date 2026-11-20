@@ -7,9 +7,9 @@
 
 Nessie enregistre l'état du catalogue dans un « version store » : les références (branches, tags), les commits et, pour chaque table, l'emplacement de ses métadonnées Iceberg. Les fichiers des tables, eux, sont dans SeaweedFS.
 
-Depuis l'étape 1.3, ce stockage est en mémoire (`IN_MEMORY`). Chaque redémarrage du pod Nessie efface le catalogue : les fichiers restent dans SeaweedFS, mais plus aucune table n'est connue. C'est arrivé deux fois le même jour, après un redémarrage du cluster et après le passage aux Secrets (ADR 006). Chaque fois, il a fallu recharger les 178 mois de la couche bronze, environ 18 minutes, puis reconstruire silver et gold.
+Depuis le déploiement de Nessie, ce stockage est en mémoire (`IN_MEMORY`). Chaque redémarrage du pod Nessie efface le catalogue : les fichiers restent dans SeaweedFS, mais plus aucune table n'est connue. C'est arrivé deux fois le même jour, après un redémarrage du cluster et après le passage aux Secrets (ADR 006). Chaque fois, il a fallu recharger les 178 mois de la couche bronze, environ 18 minutes, puis reconstruire silver et gold.
 
-L'étape 4.6 (Write-Audit-Publish) reposera sur les branches Nessie : elles doivent survivre à un redémarrage.
+Le Write-Audit-Publish prévu ensuite (ADR 008) reposera sur les branches Nessie : elles doivent survivre à un redémarrage.
 
 ## Critères
 

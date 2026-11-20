@@ -33,7 +33,7 @@ Dans les trois cas, Nessie écrit lui-même les métadonnées des tables : il a 
 Ce sont les critères de l'ADR 002, appliqués à l'ingestion :
 
 1. **Risque d'intégration** : le DAG doit pouvoir charger l'historique avec SeaweedFS comme stockage.
-2. **Gestion des identifiants** : le moins possible de composants qui détiennent des clés S3 avant l'étape 4.4.
+2. **Gestion des identifiants** : le moins possible de composants qui détiennent des clés S3, tant que les identifiants sont des valeurs de développement (avant l'ADR 006).
 3. **Ouverture** : un client Python standard pour écrire dans le lakehouse.
 4. **Réversibilité** : pouvoir changer d'avis sans migrer de données.
 
@@ -62,19 +62,19 @@ Ce sont les critères de l'ADR 002, appliqués à l'ingestion :
 - **PyIceberg lit et écrit les fichiers par `FsspecFileIO`**, donc avec la bibliothèque `s3fs`. Ce n'est pas un choix : Nessie 0.109.0 renvoie `py-io-impl: pyiceberg.io.fsspec.FsspecFileIO` dans la configuration de chaque table, même quand la signature est désactivée, et PyIceberg donne la priorité à cette configuration sur celle du client. Les versions de `s3fs` et de ses dépendances suivent les contraintes d'Airflow 3.2.2.
 - **Nessie reçoit ses propres clés S3** (mode `STATIC`) pour écrire les métadonnées des tables. Le chart Nessie les lit dans un Secret Kubernetes.
 
-Les clés restent des valeurs de développement jusqu'à l'étape 4.4.
+Les clés restent des valeurs de développement jusqu'au passage aux Secrets (ADR 006).
 
 ## Conséquences
 
-- Trois composants détiennent désormais des clés S3 (Trino, Nessie et Airflow), contre un seul avec l'ADR 002 : le critère 2 recule. À l'étape 4.4, chacun recevra sa propre identité SeaweedFS, avec des droits limités à ce dont il a besoin.
+- Trois composants détiennent désormais des clés S3 (Trino, Nessie et Airflow), contre un seul avec l'ADR 002 : le critère 2 recule. Avec le passage aux Secrets (ADR 006), chacun recevra sa propre identité SeaweedFS, avec des droits limités à ce dont il a besoin.
 - Le Secret du chart Nessie est le premier Secret Kubernetes du projet. Il contient des valeurs de développement, comme les fichiers de valeurs.
-- Le catalogue REST et l'API native doivent cohabiter. La sous-étape 2.7 le vérifie : une table écrite par PyIceberg doit être lisible depuis Trino, et son commit visible dans Nessie. Si ce n'est pas le cas, cette décision sera réexaminée avant d'écrire le DAG.
-- Par le catalogue REST, Nessie ne renvoie que le snapshot Iceberg de son commit courant : l'historique d'une table est celui des commits Nessie. Le voyage dans le temps se fait par commit, branche, tag ou horodatage Nessie, pas par identifiant de snapshot Iceberg. C'est cohérent avec le Write-Audit-Publish prévu à l'étape 4.6, fondé sur les branches.
-- L'image Airflow doit contenir PyIceberg et `s3fs`. Elle devient une image personnalisée (sous-étape 2.8).
+- Le catalogue REST et l'API native doivent cohabiter. Le test du catalogue REST (`make rest-catalog-test`) le vérifie : une table écrite par PyIceberg doit être lisible depuis Trino, et son commit visible dans Nessie. Si ce n'est pas le cas, cette décision sera réexaminée avant d'écrire le DAG.
+- Par le catalogue REST, Nessie ne renvoie que le snapshot Iceberg de son commit courant : l'historique d'une table est celui des commits Nessie. Le voyage dans le temps se fait par commit, branche, tag ou horodatage Nessie, pas par identifiant de snapshot Iceberg. C'est cohérent avec le Write-Audit-Publish prévu ensuite (ADR 008), fondé sur les branches.
+- L'image Airflow doit contenir PyIceberg et `s3fs`. Elle devient une image personnalisée ([ingestion/Dockerfile](../../ingestion/Dockerfile)).
 
-### Correction après la sous-étape 2.7
+### Correction après le test du catalogue REST
 
-La première version de cet ADR prévoyait que PyIceberg utiliserait `PyArrowFileIO`, son implémentation par défaut. Le test de la sous-étape 2.7 a montré que Nessie impose `FsspecFileIO` (voir la décision). Le principe ne change pas : PyIceberg utilise ses propres clés, sans signature ni STS. Seule l'implémentation du FileIO change, avec `s3fs` en dépendance supplémentaire. Comme `s3fs` est de toute façon nécessaire, la signature des requêtes n'aurait plus de coût en dépendances si elle était réexaminée.
+La première version de cet ADR prévoyait que PyIceberg utiliserait `PyArrowFileIO`, son implémentation par défaut. Le test du catalogue REST (`make rest-catalog-test`) a montré que Nessie impose `FsspecFileIO` (voir la décision). Le principe ne change pas : PyIceberg utilise ses propres clés, sans signature ni STS. Seule l'implémentation du FileIO change, avec `s3fs` en dépendance supplémentaire. Comme `s3fs` est de toute façon nécessaire, la signature des requêtes n'aurait plus de coût en dépendances si elle était réexaminée.
 
 Je réexaminerai cette décision dans deux cas :
 

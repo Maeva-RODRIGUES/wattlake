@@ -14,7 +14,7 @@ writer's append: the writer reloads the table and appends the batch again
 fails and is retried.
 
 The files replaced by the compaction stay in the object store until Nessie GC
-removes them, once they are older than the retention (step 8.2).
+removes them, once they are older than the retention (run_nessie_gc).
 
 run_nessie_gc then starts Nessie GC as a Kubernetes Job, from the template of
 the suspended CronJob nessie-gc (infra/nessie-gc/), and waits for its end. The

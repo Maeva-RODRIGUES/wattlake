@@ -1,6 +1,6 @@
 # dbt connection profile, versioned with the project and passed with --profiles-dir.
 # Host and port come from the environment, so the same profile works from a
-# laptop (port-forward, see run.sh) and from inside the cluster (step 3.5).
+# laptop (port-forward, see run.sh) and from inside the cluster (Airflow).
 wattlake:
   target: dev
   outputs:

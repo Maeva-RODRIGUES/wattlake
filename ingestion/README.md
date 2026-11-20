@@ -35,7 +35,7 @@ Le module `wattlake_ingestion.bronze` charge un export dans la table Iceberg `br
 - **Schéma explicite** : les colonnes de la source avec leurs types d'origine, y compris les nombres publiés en texte, plus `_source_dataset` et `_ingested_at`. Une colonne manquante ou inattendue fait échouer le chargement.
 - **Un commit par période** : `load_period` remplace les lignes de `[début, fin)` par un `overwrite` filtré. Recharger un mois donne le même résultat.
 - **Un mois vide n'écrit rien** : une réponse vide de l'API ne peut pas effacer un mois déjà chargé.
-- **Pas de partitionnement** : environ 500 000 lignes, et les statistiques min/max de chaque fichier suffisent à ignorer les autres mois. À réévaluer avec le temps réel de l'étape 5.
+- **Pas de partitionnement** : environ 500 000 lignes, et les statistiques min/max de chaque fichier suffisent à ignorer les autres mois. Le temps réel, dans sa propre table, n'a pas changé ce choix (ADR 010).
 
 ## DAG `eco2mix_history_to_bronze`
 

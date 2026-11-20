@@ -1,6 +1,6 @@
 version: 2
 
-# Power columns and energy (read before aggregating, step 3.3).
+# Power columns and energy (read before aggregating).
 #
 # Every *_mw column is a POWER in MW, not an energy. The history holds
 # consolidated and definitive data, which RTE defines as average power over the

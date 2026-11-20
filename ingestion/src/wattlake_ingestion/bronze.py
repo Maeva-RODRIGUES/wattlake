@@ -8,8 +8,8 @@ belongs to the silver layer (see docs/sources.md).
 The table is not partitioned. The history is about 500,000 rows, a few tens of
 MB of Parquet, and each month is written to its own files: Iceberg's per-file
 min/max statistics on date_heure already let overwrites and filtered queries
-skip the other months. Partitioning will be reevaluated with the real-time
-ingestion of step 5, which adds a row every quarter hour; Iceberg can evolve
+skip the other months. The real-time data lives in its own table and did not
+change this choice (docs/adr/010-ecriture-flux-iceberg.md); Iceberg can evolve
 the partition spec later without rewriting existing data.
 """
 
