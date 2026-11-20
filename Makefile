@@ -58,11 +58,11 @@ TRANSFORM_PYTHON    := 3.13.13
 # Linter and formatter of every Python file (configuration: ruff.toml).
 # 0.17.2 (2026-10-22): latest release published at least two weeks before pinning.
 RUFF_VERSION        := 0.17.2
-PYTHON_SOURCES      := ingestion streaming infra/secrets tests/catalog tools
+PYTHON_SOURCES      := ingestion streaming infra/secrets tests/catalog tests/dags tools
 
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	cluster-restart cluster-dns-check \
-	secrets argocd-up argocd-apps airflow-image smoke-test rest-catalog-test screenshots ingestion-test \
+	secrets argocd-up argocd-apps airflow-image dag-check smoke-test rest-catalog-test screenshots ingestion-test \
 	transform-lock dbt lint dbt-parse ingestion-lock ingestion-lock-check \
 	streaming-lock streaming-test streaming-image streaming-image-import
 
@@ -159,6 +159,12 @@ argocd-apps: check-kubeconfig
 ## The CI runs it with the ghcr.io name and the commit SHA as tag.
 airflow-image:
 	docker build --file $(INGESTION_DIR)/Dockerfile --tag $(AIRFLOW_IMAGE) .
+
+## Check that every DAG of the Airflow image imports, with the expected dag_ids
+## (tests/dags/check_dags.py). Needs the image of airflow-image; no cluster.
+## The script goes in on stdin: no volume, so no file permission issue.
+dag-check:
+	docker run --rm --interactive --entrypoint python $(AIRFLOW_IMAGE) - < tests/dags/check_dags.py
 
 ## End-to-end check: Trino writes an Iceberg table to SeaweedFS and Nessie records the commit.
 smoke-test: check-kubeconfig

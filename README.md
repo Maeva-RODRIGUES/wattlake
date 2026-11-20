@@ -263,10 +263,13 @@ make ingestion-test   # tests unitaires de l'ingestion, sans réseau
 make streaming-test   # tests unitaires du flux temps réel (producteur et writer), sans réseau
 make dbt-parse        # validation du projet dbt, sans base de données
 make airflow-image    # construction de l'image Airflow
+make dag-check        # import de tous les DAG dans cette image, avant sa publication
 make streaming-image  # construction de l'image du flux temps réel
 ```
 
 Sur `main`, les images sont publiées sur `ghcr.io/maeva-rodrigues/wattlake-airflow` et `ghcr.io/maeva-rodrigues/wattlake-streaming`, avec le SHA du commit comme tag. Les actions tierces sont épinglées par SHA, et les permissions réduites au minimum.
+
+`make dag-check` charge les DAG dans l'image même qui sera déployée, avec la version d'Airflow et les paquets du cluster, sans base de données : une erreur d'import, ou un DAG disparu ou ajouté sans mise à jour de la liste attendue ([tests/dags/check_dags.py](tests/dags/check_dags.py)), fait échouer le job, et l'image n'est pas publiée.
 
 `dbt build` et les tests unitaires dbt ne tournent pas en CI : ils demandent Trino et la table bronze. Ils tournent dans le cluster, avec `make dbt ARGS="build"` ou le DAG `dbt_transformations`.
 

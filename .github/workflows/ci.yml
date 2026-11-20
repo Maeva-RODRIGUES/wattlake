@@ -77,6 +77,9 @@ jobs:
         run: echo "IMAGE_REPO=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wattlake-airflow" >> "$GITHUB_ENV"
       - name: Build
         run: make airflow-image AIRFLOW_IMAGE_REPO="$IMAGE_REPO" AIRFLOW_IMAGE_TAG="$GITHUB_SHA"
+      - name: Check that every DAG imports
+        # Before publishing: an image whose DAGs do not import is never pushed.
+        run: make dag-check AIRFLOW_IMAGE_REPO="$IMAGE_REPO" AIRFLOW_IMAGE_TAG="$GITHUB_SHA"
       - name: Publish to ghcr.io (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
