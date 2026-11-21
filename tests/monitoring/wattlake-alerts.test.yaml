@@ -1,0 +1,239 @@
+# Unit tests of the WattLake alert rules (infra/monitoring/rules/wattlake-alerts.yaml),
+# run by "make alert-rules-test" with promtool, on simulated series: no
+# Prometheus, no cluster. The target extracts the rule groups of the
+# PrometheusRule to build/alert-rules/, mounted at /rules in the container.
+#
+# Series notation: "a+bxn" is a, a+b, ... (n+1 samples); "_" is a missing
+# sample; one sample per minute (interval).
+rule_files:
+  - /rules/wattlake-alerts.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # --- WattlakeWriterLagging -------------------------------------------------
+  - name: writer lag held for 15 minutes fires
+    interval: 1m
+    input_series:
+      - series: 'kafka_consumergroup_lag{consumergroup="wattlake-writer", topic="eco2mix-realtime", partition="0"}'
+        values: '14x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: WattlakeWriterLagging
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: WattlakeWriterLagging
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: The real-time writer is behind Kafka
+              description: >-
+                14 messages of eco2mix-realtime have waited more than 15 minutes
+                to be written to bronze.eco2mix_national_realtime. Check the
+                writer's logs (Grafana, WattLake dashboard).
+
+  - name: writer lag cleared by each 5-minute batch never fires
+    interval: 1m
+    input_series:
+      # A refresh every 15 minutes, written within 5 minutes.
+      - series: 'kafka_consumergroup_lag{consumergroup="wattlake-writer", topic="eco2mix-realtime", partition="0"}'
+        values: '14x4 0x9 14x4 0x9 14x4 0x9'
+    alert_rule_test:
+      - eval_time: 44m
+        alertname: WattlakeWriterLagging
+        exp_alerts: []
+
+  # --- WattlakeRealtimeStreamStalled -----------------------------------------
+  - name: no new message for 1 h 30 fires
+    interval: 1m
+    input_series:
+      # A message per minute for an hour, then nothing.
+      - series: 'kafka_topic_partition_current_offset{topic="eco2mix-realtime", partition="0"}'
+        values: '0+1x60 60x120'
+    alert_rule_test:
+      # The 1 h window is flat from 2 h on; the rule then waits 30 minutes.
+      - eval_time: 140m
+        alertname: WattlakeRealtimeStreamStalled
+        exp_alerts: []
+      - eval_time: 151m
+        alertname: WattlakeRealtimeStreamStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: No new real-time message for 1 h 30
+              description: >-
+                The producer has published nothing to eco2mix-realtime for 1 h 30.
+                Check the producer's logs and the eCO2mix API.
+
+  - name: messages every 15 minutes never stall
+    interval: 15m
+    input_series:
+      - series: 'kafka_topic_partition_current_offset{topic="eco2mix-realtime", partition="0"}'
+        values: '0+14x16'
+    alert_rule_test:
+      - eval_time: 4h
+        alertname: WattlakeRealtimeStreamStalled
+        exp_alerts: []
+
+  # --- WattlakeKafkaMetricsMissing -------------------------------------------
+  - name: missing lag series fires after 15 minutes
+    interval: 1m
+    input_series:
+      # The exporter only reports another group: nothing for the writer.
+      - series: 'kafka_consumergroup_lag{consumergroup="other", topic="eco2mix-realtime", partition="0"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: WattlakeKafkaMetricsMissing
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: WattlakeKafkaMetricsMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              consumergroup: wattlake-writer
+            exp_annotations:
+              summary: The writer's consumer lag is not collected
+              description: >-
+                Prometheus has no kafka_consumergroup_lag series for the
+                wattlake-writer group: the streaming alerts are blind. Check the
+                Kafka Exporter pod and the writer.
+
+  # --- WattlakeDagRunFailed --------------------------------------------------
+  - name: a new failure on an existing counter fires for one hour
+    interval: 1m
+    input_series:
+      - series: 'airflow_dagrun_failed_count{dag_id="dbt_transformations", job="airflow-statsd"}'
+        values: '1x89 2x120'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: WattlakeDagRunFailed
+        exp_alerts: []
+      - eval_time: 91m
+        alertname: WattlakeDagRunFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              dag_id: dbt_transformations
+              job: airflow-statsd
+            exp_annotations:
+              summary: DAG dbt_transformations failed
+              description: >-
+                A run of dbt_transformations failed in the last hour. For
+                dbt_transformations, a failed data test blocks the publication of
+                silver and gold (Write-Audit-Publish, ADR 008): main keeps the
+                last tested version. Check the run in the Airflow UI.
+      # Resolved once the failure is more than an hour old.
+      - eval_time: 155m
+        alertname: WattlakeDagRunFailed
+        exp_alerts: []
+
+  - name: the first failure since the StatsD exporter started fires
+    interval: 1m
+    input_series:
+      # StatsD creates the series on the first event: a single sample at 1,
+      # which increase() alone cannot see.
+      - series: 'airflow_dagrun_failed_count{dag_id="dbt_transformations", job="airflow-statsd"}'
+        values: '_x30 1x100'
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: WattlakeDagRunFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              dag_id: dbt_transformations
+              job: airflow-statsd
+            exp_annotations:
+              summary: DAG dbt_transformations failed
+              description: >-
+                A run of dbt_transformations failed in the last hour. For
+                dbt_transformations, a failed data test blocks the publication of
+                silver and gold (Write-Audit-Publish, ADR 008): main keeps the
+                last tested version. Check the run in the Airflow UI.
+      - eval_time: 100m
+        alertname: WattlakeDagRunFailed
+        exp_alerts: []
+
+  - name: an exporter restart without failure does not fire
+    interval: 1m
+    input_series:
+      # The old pod reported 4 failures; the new one has had none: no series.
+      - series: 'airflow_dagrun_failed_count{dag_id="dbt_transformations", job="airflow-statsd", pod="statsd-old"}'
+        values: '4x60'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: WattlakeDagRunFailed
+        exp_alerts: []
+
+  # --- WattlakeDbtNotPublished -----------------------------------------------
+  - name: no successful dbt run for 2 hours fires
+    interval: 1m
+    input_series:
+      # A successful run every minute for 3 hours, then none.
+      - series: 'airflow_dagrun_duration_count{dag_id="dbt_transformations", job="airflow-statsd"}'
+        values: '0+1x180 180x200'
+    alert_rule_test:
+      # Flat 2 h window from 5 h on, then 15 minutes of "for".
+      - eval_time: 310m
+        alertname: WattlakeDbtNotPublished
+        exp_alerts: []
+      - eval_time: 316m
+        alertname: WattlakeDbtNotPublished
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              dag_id: dbt_transformations
+              job: airflow-statsd
+            exp_annotations:
+              summary: Silver and gold have not been published for 2 hours
+              description: >-
+                No dbt_transformations run has succeeded for 2 hours: silver and
+                gold on main are getting stale. Check the failed runs (data tests,
+                Trino, Nessie) in the Airflow UI.
+
+  - name: hourly successful runs never fire
+    interval: 1h
+    input_series:
+      - series: 'airflow_dagrun_duration_count{dag_id="dbt_transformations", job="airflow-statsd"}'
+        values: '0+1x12'
+    alert_rule_test:
+      - eval_time: 12h
+        alertname: WattlakeDbtNotPublished
+        exp_alerts: []
+
+  - name: a StatsD exporter restart is not a missing publication
+    interval: 1m
+    input_series:
+      # The counter starts again: a new series with a single success, which
+      # increase() reads as 0 until the next one.
+      - series: 'airflow_dagrun_duration_count{dag_id="dbt_transformations", job="airflow-statsd"}'
+        values: '_x10 1x110'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: WattlakeDbtNotPublished
+        exp_alerts: []
+      - eval_time: 120m
+        alertname: WattlakeDbtNotPublished
+        exp_alerts: []
+
+  - name: no successful run at all for 2 hours fires
+    interval: 1m
+    input_series:
+      # Another DAG only: dbt_transformations has no series in the window.
+      - series: 'airflow_dagrun_duration_count{dag_id="iceberg_maintenance", job="airflow-statsd"}'
+        values: '1x150'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: WattlakeDbtNotPublished
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              dag_id: dbt_transformations
+            exp_annotations:
+              summary: Silver and gold have not been published for 2 hours
+              description: >-
+                No dbt_transformations run has succeeded for 2 hours: silver and
+                gold on main are getting stale. Check the failed runs (data tests,
+                Trino, Nessie) in the Airflow UI.

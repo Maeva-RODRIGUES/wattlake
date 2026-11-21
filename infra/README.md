@@ -159,6 +159,8 @@ Prometheus évalue les règles par défaut de `kube-prometheus-stack`, qui couvr
 | `WattlakeDagRunFailed` | un run de DAG a échoué dans l'heure |
 | `WattlakeDbtNotPublished` | silver et gold n'ont pas été publiés depuis 2 heures (critique) |
 
+Une règle modifiée se teste avant le commit, sans cluster : `make alert-rules-test` (aussi lancé en CI) vérifie sa syntaxe et rejoue les tests de [tests/monitoring/](../tests/monitoring/) avec `promtool`.
+
 Alertmanager les envoie dans un salon Discord, par un webhook : toutes sauf `Watchdog` et les alertes de gravité `info`, avec un second message quand l'alerte est résolue. Pour brancher un salon (ou en changer) :
 
 1. Dans Discord, paramètres du salon, Intégrations, Webhooks : créer un webhook et copier son URL.

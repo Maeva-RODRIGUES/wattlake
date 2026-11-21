@@ -58,11 +58,19 @@ TRANSFORM_PYTHON    := 3.13.13
 # Linter and formatter of every Python file (configuration: ruff.toml).
 # 0.17.2 (2026-10-22): latest release published at least two weeks before pinning.
 RUFF_VERSION        := 0.17.2
+
+# Alert rules (docs/adr/016-alertes.md), tested with the promtool of the
+# Prometheus version that kube-prometheus-stack 92.14.1 deploys in the cluster.
+ALERT_RULES         := infra/monitoring/rules/wattlake-alerts.yaml
+ALERT_RULES_TESTS   := tests/monitoring/wattlake-alerts.test.yaml
+ALERT_RULES_DIR     := build/alert-rules
+PROMETHEUS_IMAGE    := quay.io/prometheus/prometheus:v3.15.1
+PYYAML_VERSION      := 6.0.2
 PYTHON_SOURCES      := ingestion streaming infra/secrets tests/catalog tests/dags tools
 
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	cluster-restart cluster-dns-check \
-	secrets argocd-up argocd-apps airflow-image dag-check smoke-test rest-catalog-test screenshots ingestion-test \
+	secrets argocd-up argocd-apps airflow-image dag-check alert-rules-test smoke-test rest-catalog-test screenshots ingestion-test \
 	transform-lock dbt lint dbt-parse ingestion-lock ingestion-lock-check \
 	streaming-lock streaming-test streaming-image streaming-image-import
 
@@ -165,6 +173,20 @@ airflow-image:
 ## The script goes in on stdin: no volume, so no file permission issue.
 dag-check:
 	docker run --rm --interactive --entrypoint python $(AIRFLOW_IMAGE) - < tests/dags/check_dags.py
+
+## Check and unit test the alert rules with promtool, on simulated series
+## (tests/monitoring/). promtool reads plain rule files, not PrometheusRule
+## resources: the rule groups (spec) are extracted to build/ first. No cluster.
+alert-rules-test:
+	mkdir -p $(ALERT_RULES_DIR)
+	uvx --quiet --from pyyaml==$(PYYAML_VERSION) python -c \
+		'import sys, yaml; yaml.safe_dump(yaml.safe_load(open(sys.argv[1]))["spec"], open(sys.argv[2], "w"), sort_keys=False)' \
+		$(ALERT_RULES) $(ALERT_RULES_DIR)/wattlake-alerts.rules.yaml
+	cp $(ALERT_RULES_TESTS) $(ALERT_RULES_DIR)/
+	docker run --rm --volume $(CURDIR)/$(ALERT_RULES_DIR):/rules:ro --entrypoint /bin/promtool $(PROMETHEUS_IMAGE) \
+		check rules /rules/wattlake-alerts.rules.yaml
+	docker run --rm --volume $(CURDIR)/$(ALERT_RULES_DIR):/rules:ro --entrypoint /bin/promtool $(PROMETHEUS_IMAGE) \
+		test rules /rules/$(notdir $(ALERT_RULES_TESTS))
 
 ## End-to-end check: Trino writes an Iceberg table to SeaweedFS and Nessie records the commit.
 smoke-test: check-kubeconfig

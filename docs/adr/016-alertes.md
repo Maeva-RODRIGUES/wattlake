@@ -71,7 +71,7 @@ Ce qui existe déjà, vérifié dans le cluster :
 - **`WattlakeDagRunFailed` se déclenche presque chaque matin**, au réveil du portable : la veille est incomplète et le Write-Audit-Publish refuse de publier. L'alerte est juste : les données sont réellement incomplètes. Elle se résout seule une heure après le dernier échec. `WattlakeDbtNotPublished` ne se déclenche pas dans ce cas, parce que Prometheus n'a pas de points pendant la veille (`offset 2h` vide).
 - **Les sourdines sont perdues au redémarrage d'Alertmanager**, qui n'a pas de volume. C'est acceptable sur un cluster local.
 - **Environ 30 Mio de mémoire en plus.**
-- **Les règles restent à tester** sur des séries simulées, avec `promtool test rules`.
+- **Les règles sont testées en CI** (`make alert-rules-test`) avec `promtool test rules`, sur des séries simulées ([tests/monitoring/wattlake-alerts.test.yaml](../../tests/monitoring/wattlake-alerts.test.yaml)) : chaque règle se déclenche au bon moment, et aucune ne se déclenche dans les cas proches d'une panne (lots du writer, redémarrage de l'exporter StatsD, runs horaires). Chacune des deux précautions ci-dessus a son test, qui échoue si on la retire.
 
 ## Mise à jour : notifications vers Discord
 

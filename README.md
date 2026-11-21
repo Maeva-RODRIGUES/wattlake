@@ -257,13 +257,14 @@ Au premier lancement, la cible crée un environnement virtuel `.venv` dans le pr
 
 ### Intégration continue
 
-Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) tourne sur chaque pull request et chaque push sur `main`. Ses six jobs appellent les mêmes cibles qu'en local :
+Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) tourne sur chaque pull request et chaque push sur `main`. Ses sept jobs appellent les mêmes cibles qu'en local :
 
 ```bash
 make lint             # ruff : style et erreurs du code Python (configuration : ruff.toml)
 make ingestion-test   # tests unitaires de l'ingestion, sans réseau
 make streaming-test   # tests unitaires du flux temps réel (producteur et writer), sans réseau
 make dbt-parse        # validation du projet dbt, sans base de données
+make alert-rules-test # syntaxe et tests unitaires des règles d'alerte (promtool), sans cluster
 make airflow-image    # construction de l'image Airflow
 make dag-check        # import de tous les DAG dans cette image, avant sa publication
 make streaming-image  # construction de l'image du flux temps réel
@@ -272,6 +273,8 @@ make streaming-image  # construction de l'image du flux temps réel
 Sur `main`, les images sont publiées sur `ghcr.io/maeva-rodrigues/wattlake-airflow` et `ghcr.io/maeva-rodrigues/wattlake-streaming`, avec le SHA du commit comme tag. Les actions tierces sont épinglées par SHA, et les permissions réduites au minimum.
 
 `make dag-check` charge les DAG dans l'image même qui sera déployée, avec la version d'Airflow et les paquets du cluster, sans base de données : une erreur d'import, ou un DAG disparu ou ajouté sans mise à jour de la liste attendue ([tests/dags/check_dags.py](tests/dags/check_dags.py)), fait échouer le job, et l'image n'est pas publiée.
+
+`make alert-rules-test` rejoue les règles d'alerte sur des séries simulées ([tests/monitoring/wattlake-alerts.test.yaml](tests/monitoring/wattlake-alerts.test.yaml)) : chaque alerte doit se déclencher au bon moment, et pas dans les cas qui ressemblent à une panne sans en être une (lots du writer, redémarrage de l'exporter StatsD).
 
 `dbt build` et les tests unitaires dbt ne tournent pas en CI : ils demandent Trino et la table bronze. Ils tournent dans le cluster, avec `make dbt ARGS="build"` ou le DAG `dbt_transformations`.
 
@@ -283,6 +286,7 @@ Le reste se met à jour à la main, en vérifiant que chaque version a au moins 
 
 - **Airflow et les paquets épinglés sur ses contraintes** (`httpx`, `pyarrow`, `s3fs`, `sqlalchemy`), que Dependabot ignore : une autre version de ces paquets est impossible à installer avec les contraintes d'Airflow 3.2.2, et la CI le refuse. Monter de version Airflow change ensemble l'image de base et `apache-airflow==` dans [`ingestion/Dockerfile`](ingestion/Dockerfile), l'URL des contraintes (Dockerfile, Makefile et [`tests/catalog/run.sh`](tests/catalog/run.sh)), `airflowVersion` dans [`infra/airflow/values.yaml`](infra/airflow/values.yaml), le chart, puis ces paquets ;
 - les charts Helm et la version de Python, dans le [`Makefile`](Makefile) ;
+- l'image de `promtool` (`PROMETHEUS_IMAGE` dans le Makefile), qui suit la version de Prometheus déployée par le chart `kube-prometheus-stack` ;
 - les tags d'images dans les fichiers de valeurs de [`infra/`](infra/) ;
 - les dépendances de dbt : modifier [`transform/requirements.in`](transform/requirements.in), puis `make transform-lock`, qui régénère `requirements.txt` en ignorant les versions de moins de 14 jours ;
 - les dépendances du flux temps réel : modifier [`streaming/pyproject.toml`](streaming/pyproject.toml), puis `make streaming-lock`, qui régénère `requirements.txt` et `requirements-test.txt`, empreintes comprises, avec la même règle. Dependabot ne suit que l'image de base, et seulement ses correctifs (3.13.x).
