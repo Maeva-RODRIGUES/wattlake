@@ -328,3 +328,28 @@ unit_tests:
       rows:
         - {timestamp_utc: "2026-08-31 21:30:00 UTC", data_status: consolidated, step_hours: 0.5, consumption_mw: 39000, hydro_run_of_river_mw: null}
         - {timestamp_utc: "2026-08-31 22:00:00 UTC", data_status: real_time, step_hours: 0.25, consumption_mw: 41000, hydro_run_of_river_mw: 3492}
+
+  - name: keeps_the_repeated_hour_in_autumn
+    description: >
+      Rows of 2025-10-26 as the source publishes them. Local 02:00-02:59 occurs
+      twice; the source keeps only the second one, in winter time (01:00 UTC),
+      and has no row from 00:00 to 00:59 UTC (docs/sources.md, quirk 8). The
+      spring rule (local time = UTC converted to Paris time) must keep these
+      rows: 01:00 UTC is 02:00 in winter time. Every row belongs to local date
+      2025-10-26, including 23:30 UTC the day before.
+    model: eco2mix_national
+    given:
+      - input: source('bronze', 'eco2mix_national_history')
+        rows:
+          - {date_heure: "2025-10-25 23:30:00 UTC", date: "2025-10-26", heure: "01:30", nature: "Données définitives", consommation: 43714}
+          - {date_heure: "2025-10-26 01:00:00 UTC", date: "2025-10-26", heure: "02:00", nature: "Données définitives", consommation: 43118}
+          - {date_heure: "2025-10-26 01:30:00 UTC", date: "2025-10-26", heure: "02:30", nature: "Données définitives", consommation: 42385}
+          - {date_heure: "2025-10-26 02:00:00 UTC", date: "2025-10-26", heure: "03:00", nature: "Données définitives", consommation: 40960}
+      - input: source('bronze', 'eco2mix_national_realtime')
+        rows: []
+    expect:
+      rows:
+        - {timestamp_utc: "2025-10-25 23:30:00 UTC", local_date: "2025-10-26", step_hours: 0.5, consumption_mw: 43714}
+        - {timestamp_utc: "2025-10-26 01:00:00 UTC", local_date: "2025-10-26", step_hours: 0.5, consumption_mw: 43118}
+        - {timestamp_utc: "2025-10-26 01:30:00 UTC", local_date: "2025-10-26", step_hours: 0.5, consumption_mw: 42385}
+        - {timestamp_utc: "2025-10-26 02:00:00 UTC", local_date: "2025-10-26", step_hours: 0.5, consumption_mw: 40960}

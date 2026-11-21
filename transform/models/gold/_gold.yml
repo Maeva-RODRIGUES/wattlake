@@ -272,3 +272,24 @@ unit_tests:
         - {local_date: "2012-06-01", hours_with_data: 1, production_mwh: 500, renewable_mwh: 300, renewable_share: 0.6, renewable_share_strict: null}
         - {local_date: "2013-06-01", hours_with_data: 0.5, production_mwh: 200, renewable_mwh: 200, renewable_share: 1, renewable_share_strict: 0.825}
         - {local_date: "2026-10-01", hours_with_data: 0.5, production_mwh: 400, renewable_mwh: 200, renewable_share: 0.5, renewable_share_strict: 0.5}
+
+  - name: clock_change_days_have_23_or_25_hours
+    description: >
+      Clock-change days in Paris time, with 1,000 MW of production on every half
+      hour (fixture clock_change_days.csv; gold reads local_date and step_hours,
+      not the timestamps). 2025-10-26 as the source publishes it: 48 half hours,
+      one of the two repeated 02:00 hours missing (docs/sources.md, quirk 8), so
+      24 hours out of 25 and the day is incomplete. 2026-10-25 with all 50 half
+      hours: 25 hours and 25,000 MWh, complete. 2026-03-29, spring: 46 half
+      hours, 23 hours, complete. A day counted as 24 hours, or energy computed
+      from an hourly average, would fail.
+    model: energy_mix_daily
+    given:
+      - input: ref('eco2mix_national')
+        format: csv
+        fixture: clock_change_days
+    expect:
+      rows:
+        - {local_date: "2025-10-26", expected_hours: 25, hours_with_data: 24, is_complete: false, is_partial: false, production_mwh: 24000}
+        - {local_date: "2026-10-25", expected_hours: 25, hours_with_data: 25, is_complete: true, is_partial: false, production_mwh: 25000}
+        - {local_date: "2026-03-29", expected_hours: 23, hours_with_data: 23, is_complete: true, is_partial: false, production_mwh: 23000}
