@@ -47,7 +47,7 @@ Ce qui existe déjà, vérifié dans le cluster :
 - les alertes sont regroupées par nom et par namespace, et renotifiées toutes les 12 heures au plus ;
 - `Watchdog` n'est jamais notifiée : elle prouve seulement que la chaîne d'alerte fonctionne ;
 - une alerte `critical` met en sourdine les alertes `warning` de même nom et de même namespace ;
-- aucun canal de notification pour l'instant : les alertes se lisent dans l'interface d'Alertmanager et dans Grafana, qui reçoit Alertmanager comme source de données.
+- les alertes se lisent dans l'interface d'Alertmanager et dans Grafana, qui reçoit Alertmanager comme source de données (pour l'envoi vers Discord, voir la mise à jour plus bas).
 
 **Les règles par défaut du chart sont gardées telles quelles** : elles couvrent la plateforme (`TargetDown`, `KubePodCrashLooping`, `KubePersistentVolumeFillingUp`…), et aucune ne se déclenche à tort aujourd'hui.
 
@@ -71,11 +71,33 @@ Ce qui existe déjà, vérifié dans le cluster :
 - **`WattlakeDagRunFailed` se déclenche presque chaque matin**, au réveil du portable : la veille est incomplète et le Write-Audit-Publish refuse de publier. L'alerte est juste : les données sont réellement incomplètes. Elle se résout seule une heure après le dernier échec. `WattlakeDbtNotPublished` ne se déclenche pas dans ce cas, parce que Prometheus n'a pas de points pendant la veille (`offset 2h` vide).
 - **Les sourdines sont perdues au redémarrage d'Alertmanager**, qui n'a pas de volume. C'est acceptable sur un cluster local.
 - **Environ 30 Mio de mémoire en plus.**
-- **Les règles restent à tester** sur des séries simulées, avec `promtool test rules`, et l'envoi des alertes reste à brancher sur un canal de notification.
+- **Les règles restent à tester** sur des séries simulées, avec `promtool test rules`.
+
+## Mise à jour : notifications vers Discord
+
+Les alertes sont maintenant envoyées dans un salon Discord.
+
+| Option | Avantages | Limites |
+| --- | --- | --- |
+| Discord, par un webhook | Récepteur natif d'Alertmanager (`discord_configs`). Notifications sur le téléphone. Un webhook se crée en une minute, sans application à déclarer | Un compte Discord. Message limité à 2 000 caractères |
+| Telegram | Récepteur natif, notifications sur le téléphone | Un bot à créer, deux identifiants à garder (jeton et identifiant de conversation) |
+| E-mail (SMTP) | Aucun outil de plus | Un mot de passe d'application de messagerie, et des courriels moins visibles |
+| Slack | Récepteur natif, standard en entreprise | Un espace de travail à créer pour une seule personne |
+
+**Le récepteur `discord` reçoit toutes les alertes**, sauf `Watchdog`, `InfoInhibitor` et les alertes de gravité `info` (par exemple `CPUThrottlingHigh`), qui restent visibles dans les interfaces. Un message par groupe d'alertes : en titre, l'état et le nom (`[FIRING:1] WattlakeDbtNotPublished monitoring (critical)`) ; dans le corps, la gravité, le résumé et la description de chaque alerte. Une alerte résolue est notifiée aussi (`send_resolved`).
+
+**L'URL du webhook est un secret** : quiconque la détient peut écrire dans le salon.
+
+- `make secrets` la lit dans `DISCORD_WEBHOOK_URL`, ou la demande sans l'afficher, vérifie son format, et crée le Secret `alertmanager-discord` (groupe `alerting`, ADR 006).
+- Alertmanager la lit dans un fichier monté depuis ce Secret (`webhook_url_file`) : elle n'apparaît ni dans le dépôt, ni dans la configuration du chart, ni dans le Secret de configuration qu'il génère.
+- **Le Secret est monté en option** (`optional: true`). Sans lui, Alertmanager démarre quand même, et seuls les envois vers Discord échouent, avec une erreur dans ses logs. Un cluster recréé sans webhook (entrée vide à `make secrets`) garde donc ses alertes, visibles dans les interfaces.
+
+Vérifié avant le déploiement, avec Alertmanager v0.34.1 dans Docker et un faux serveur Discord local : sans le fichier, Alertmanager tourne et journalise l'échec ; avec le fichier, l'alerte arrive en rouge, puis en vert une fois résolue, et `Watchdog` comme l'alerte `info` ne sont pas envoyées.
 
 ## Sources
 
 - kube-prometheus-stack 92.14.1, valeurs `alertmanager.config` et `alertmanager.alertmanagerSpec`. https://github.com/prometheus-community/helm-charts/tree/kube-prometheus-stack-92.14.1/charts/kube-prometheus-stack
 - Prometheus, règles d'alerte et fonctions `increase`, `absent`, `absent_over_time`. https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/
-- Alertmanager, routage et inhibition. https://prometheus.io/docs/alerting/latest/configuration/
+- Alertmanager, routage, inhibition et récepteur `discord_configs` (`webhook_url_file`). https://prometheus.io/docs/alerting/latest/configuration/
+- Discord, webhooks d'un salon : paramètres du salon, Intégrations, Webhooks.
 - Chart Airflow 1.22.0, correspondances StatsD (`dagrun.duration.success.*` vers `airflow_dagrun_duration`, `dagrun.duration.failed.*` vers `airflow_dagrun_failed`), lues dans le ConfigMap `airflow-statsd` du cluster.

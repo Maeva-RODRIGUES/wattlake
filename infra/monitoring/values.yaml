@@ -15,13 +15,14 @@ alertmanager:
       group_wait: 30s
       group_interval: 5m
       repeat_interval: 12h
-      # No notification channel yet: alerts are visible in the Alertmanager
-      # and Grafana web interfaces only.
-      receiver: "null"
+      receiver: discord
       routes:
-        # Watchdog always fires, to prove that the alerting pipeline works:
-        # it is never notified.
-        - matchers: ['alertname = "Watchdog"']
+        # Watchdog always fires, to prove that the alerting pipeline works, and
+        # InfoInhibitor only exists to silence info alerts: never notified.
+        - matchers: ['alertname =~ "Watchdog|InfoInhibitor"']
+          receiver: "null"
+        # Info alerts (CPU throttling...) stay in the web interfaces.
+        - matchers: ['severity = "info"']
           receiver: "null"
     # A critical alert silences the warning alerts of the same name and
     # namespace (the chart's default inhibition rule).
@@ -31,7 +32,32 @@ alertmanager:
         equal: [namespace, alertname]
     receivers:
       - name: "null"
+      # A Discord channel, through a webhook. Its URL is a secret (anyone
+      # holding it can post): it is read from the file mounted below, never
+      # written in this repository.
+      - name: discord
+        discord_configs:
+          - webhook_url_file: /etc/alertmanager/discord/webhook-url
+            send_resolved: true
+            title: '{{ template "discord.default.title" . }}'
+            # One line per alert: its summary, then its description.
+            message: |-
+              {{ range .Alerts }}**{{ .Labels.severity | toUpper }}** {{ .Annotations.summary }}
+              {{ .Annotations.description }}
+              {{ end }}
   alertmanagerSpec:
+    # The Discord webhook URL, from the Secret created by "make secrets"
+    # (docs/adr/016-alertes.md). Optional: without it, Alertmanager still
+    # starts, and only the Discord notifications fail (logged) until it exists.
+    volumes:
+      - name: discord-webhook
+        secret:
+          secretName: alertmanager-discord
+          optional: true
+    volumeMounts:
+      - name: discord-webhook
+        mountPath: /etc/alertmanager/discord
+        readOnly: true
     # Notification log and silences live on the pod's disk: a restart forgets
     # the silences, which is acceptable on a local cluster.
     retention: 120h

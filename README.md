@@ -125,7 +125,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 - [x] Maintenance des tables Iceberg : compactage et nettoyage par Nessie GC, chaque jour (ADR 013)
 - [x] DNS de secours pour les noms externes après un changement de réseau (ADR 014)
 - [x] Rechargement hebdomadaire de l'historique récent, pour les données consolidées et définitives publiées en retard (ADR 015)
-- [x] Alertes sur les pipelines : retard du writer, flux arrêté, DAG en échec, silver et gold non publiés (ADR 016)
+- [x] Alertes sur les pipelines, envoyées sur Discord : retard du writer, flux arrêté, DAG en échec, silver et gold non publiés (ADR 016)
 
 ## Démarrer
 
@@ -321,7 +321,6 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 
 ## Limites et suites possibles
 
-- **Pas encore de notification.** Les alertes se lisent dans Alertmanager et dans Grafana, sans être envoyées nulle part (ADR 016).
 - **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS. CoreDNS passe alors par des DNS publics pour les noms dont la stack a besoin (ADR 014), mais le téléchargement des images reste bloqué jusqu'à `make cluster-restart` : `make cluster-dns-check` le détecte (voir [infra/README.md](infra/README.md)).
 
 ## Ce que je ferais en production

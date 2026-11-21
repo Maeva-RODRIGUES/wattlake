@@ -34,15 +34,16 @@ Le chart Airflow demande, avec Argo CD, `useHelmHooks: false` et `applyCustomEnv
 
 ## Secrets
 
-Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée neuf Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials`, `airflow-credentials`, `nessie-db-credentials`, `streaming-credentials` et `nessie-gc-credentials` dans le namespace `wattlake`, et `grafana-admin` dans le namespace `monitoring`. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
+Les identifiants ne sont pas dans le dépôt (voir l'[ADR 006](../docs/adr/006-gestion-des-secrets.md)). `make secrets`, lancé par `make up` avant Argo CD, exécute [secrets/create.sh](secrets/create.sh), qui crée neuf Secrets avec des valeurs aléatoires : `seaweedfs-s3-config`, `nessie-credentials`, `trino-credentials`, `postgres-credentials`, `airflow-credentials`, `nessie-db-credentials`, `streaming-credentials` et `nessie-gc-credentials` dans le namespace `wattlake`, et `grafana-admin` dans le namespace `monitoring`. Un dixième, `alertmanager-discord` (namespace `monitoring`), garde l'URL du webhook Discord des alertes : le script la demande au lieu de la tirer au hasard. Les fichiers de valeurs et les manifestes ne citent que leurs noms.
 
 - **Une identité S3 par composant** : Nessie, Trino, Airflow, le writer temps réel (`streaming`) et le nettoyage (`nessie-gc`) ont chacun leurs clés, limitées à la lecture, l'écriture et la liste du bucket `warehouse`. L'identité `admin`, utilisée par aucun composant, sert à l'exploitation.
-- **Par groupes, en tout ou rien** : des Secrets qui partagent des valeurs forment un groupe (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Un groupe est créé en entier ou pas du tout : le script ne remplace jamais un Secret existant, et s'arrête si seuls certains Secrets d'un groupe existent. Un groupe ajouté plus tard se crée sur un cluster existant sans toucher aux autres. Cinq groupes :
+- **Par groupes, en tout ou rien** : des Secrets qui partagent des valeurs forment un groupe (chaque paire de clés S3 est aussi dans la configuration de SeaweedFS). Un groupe est créé en entier ou pas du tout : le script ne remplace jamais un Secret existant, et s'arrête si seuls certains Secrets d'un groupe existent. Un groupe ajouté plus tard se crée sur un cluster existant sans toucher aux autres. Six groupes :
   - `stack` : les cinq premiers Secrets ;
   - `nessie-db` : le rôle PostgreSQL de Nessie (voir l'[ADR 007](../docs/adr/007-stockage-versions-nessie.md)) ;
   - `streaming` : les clés du writer temps réel (ADR 010). Le script les ajoute aussi comme identité dans `seaweedfs-s3-config`, par [secrets/add_s3_identity.py](secrets/add_s3_identity.py), sans toucher aux autres identités. Sur un cluster existant, il faut ensuite redémarrer le filer de SeaweedFS, qui ne lit ses identités qu'au démarrage : le script affiche la commande.
   - `monitoring` : le compte admin de Grafana (ADR 011), dans le namespace `monitoring`, que le script crée au besoin.
   - `nessie-gc` : les clés de Nessie GC (ADR 013), ajoutées comme identité dans `seaweedfs-s3-config` de la même façon que `streaming`.
+  - `alerting` : l'URL du webhook Discord (ADR 016), lue dans `DISCORD_WEBHOOK_URL` ou demandée sans être affichée. Laissée vide, le groupe est sauté : Alertmanager tourne quand même, sans envoyer les alertes.
 - **Hors d'Argo CD** : les Secrets ne sont pas suivis par Argo CD, et portent des noms qu'aucun chart ne génère. Argo CD ne peut donc pas les supprimer.
 
 Lors du passage à ces Secrets, Argo CD a supprimé (`prune`) les Secrets que les charts ne généraient plus, sauf deux : `airflow-fernet-key` et `seaweedfs-s3-secret`. Les charts les déclarent comme hooks Helm (annotation `helm.sh/hook`), et Argo CD traite un hook à part : il ne le supprime jamais par `prune`. Ils ont été supprimés à la main. Ce piège vaut pour toute ressource déclarée en hook par un chart.
@@ -158,7 +159,13 @@ Prometheus évalue les règles par défaut de `kube-prometheus-stack`, qui couvr
 | `WattlakeDagRunFailed` | un run de DAG a échoué dans l'heure |
 | `WattlakeDbtNotPublished` | silver et gold n'ont pas été publiés depuis 2 heures (critique) |
 
-Les alertes actives se lisent dans Grafana (menu Alerting, source Alertmanager) ou dans l'interface d'Alertmanager, qui permet aussi de les mettre en sourdine :
+Alertmanager les envoie dans un salon Discord, par un webhook : toutes sauf `Watchdog` et les alertes de gravité `info`, avec un second message quand l'alerte est résolue. Pour brancher un salon (ou en changer) :
+
+1. Dans Discord, paramètres du salon, Intégrations, Webhooks : créer un webhook et copier son URL.
+2. Supprimer l'ancien Secret s'il existe (`kubectl --context k3d-wattlake -n monitoring delete secret alertmanager-discord`), puis lancer `make secrets`, qui demande l'URL sans l'afficher.
+3. Le kubelet met à jour le fichier monté dans le pod Alertmanager en une minute environ, sans redémarrage.
+
+Les alertes actives se lisent aussi dans Grafana (menu Alerting, source Alertmanager) ou dans l'interface d'Alertmanager, qui permet de les mettre en sourdine :
 
 ```bash
 kubectl --context k3d-wattlake -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9093:9093   # http://127.0.0.1:9093

@@ -19,6 +19,10 @@
 #   4. monitoring: the Grafana admin credentials, in the "monitoring" namespace.
 #   5. nessie-gc: the S3 key pair of Nessie GC, the only identity that deletes
 #      files in bulk (docs/adr/013-maintenance-iceberg.md), added like group 3.
+#   6. alerting: the Discord webhook URL that Alertmanager posts alerts to
+#      (docs/adr/016-alertes.md), in the "monitoring" namespace. Not random:
+#      read from DISCORD_WEBHOOK_URL, or asked for without echo. Left empty,
+#      the group is skipped and alerts are not notified until it is created.
 #
 # Usage: make secrets
 set -euo pipefail
@@ -31,6 +35,7 @@ NESSIE_DB_SECRETS=(nessie-db-credentials)
 STREAMING_SECRETS=(streaming-credentials)
 NESSIE_GC_SECRETS=(nessie-gc-credentials)
 MONITORING_SECRETS=(grafana-admin)
+ALERTING_SECRETS=(alertmanager-discord)
 LABEL="app.kubernetes.io/part-of=wattlake"
 
 kubectl_ns() {
@@ -77,6 +82,7 @@ nessie_db_action=$(group_action nessie-db "$NAMESPACE" "${NESSIE_DB_SECRETS[@]}"
 streaming_action=$(group_action streaming "$NAMESPACE" "${STREAMING_SECRETS[@]}")
 nessie_gc_action=$(group_action nessie-gc "$NAMESPACE" "${NESSIE_GC_SECRETS[@]}")
 monitoring_action=$(group_action monitoring "$MONITORING_NAMESPACE" "${MONITORING_SECRETS[@]}")
+alerting_action=$(group_action alerting "$MONITORING_NAMESPACE" "${ALERTING_SECRETS[@]}")
 
 ensure_namespace "$NAMESPACE"
 
@@ -248,8 +254,39 @@ stringData:
 EOF
 }
 
+create_alerting() {
+# Created in Discord (channel settings, Integrations, Webhooks): anyone holding
+# the URL can post to the channel, so it is never echoed nor passed as an argument.
+local url="${DISCORD_WEBHOOK_URL:-}"
+if [ -z "$url" ] && [ -t 0 ]; then
+    read -r -s -p "Discord webhook URL (input hidden, empty to skip): " url
+    echo
+fi
+if [ -z "$url" ]; then
+    echo "Group alerting: no Discord webhook URL, skipped. Alerts are not notified until it is created."
+    return 0
+fi
+# Strict format: the URL then needs no escaping in the YAML below.
+if ! [[ "$url" =~ ^https://(discord|discordapp)\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$ ]]; then
+    echo "Group alerting: not a Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>)." >&2
+    return 1
+fi
+ensure_namespace "$MONITORING_NAMESPACE"
+# Mounted as a file by Alertmanager (webhook_url_file, infra/monitoring/values.yaml).
+cat <<EOF | kubectl_monitoring create --filename -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-discord
+  labels: {app.kubernetes.io/part-of: wattlake}
+type: Opaque
+stringData:
+  webhook-url: ${url}
+EOF
+}
+
 # stack first: the streaming and nessie-gc groups add an identity to its SeaweedFS configuration.
-for group in stack nessie_db streaming monitoring nessie_gc; do
+for group in stack nessie_db streaming monitoring nessie_gc alerting; do
     action_var="${group}_action"
     if [ "${!action_var}" = "create" ]; then
         "create_${group}"

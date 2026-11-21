@@ -71,6 +71,7 @@ Le principe reste le même, mais `make secrets` ne crée plus seulement les cinq
 | `streaming` | `streaming-credentials` (identité S3 du writer) | ADR 010 |
 | `monitoring` | `grafana-admin`, dans le namespace `monitoring` | ADR 011 |
 | `nessie-gc` | `nessie-gc-credentials` (seule identité qui supprime des fichiers en masse) | ADR 013 |
+| `alerting` | `alertmanager-discord`, dans le namespace `monitoring` : l'URL du webhook Discord, demandée à la création au lieu d'être tirée au hasard | ADR 016 |
 
 Les identités S3 ajoutées après coup (`streaming`, `nessie-gc`) sont insérées dans la configuration de SeaweedFS du groupe `stack` par `add_s3_identity.py`. Pour changer une valeur, il suffit donc de supprimer les Secrets de son groupe, et non plus les cinq, puis de relancer `make secrets` et de redémarrer les pods concernés.
 
