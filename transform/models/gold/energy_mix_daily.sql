@@ -75,8 +75,10 @@ select
     hours_with_data,
     hours_with_data = expected_hours as is_complete,
     -- The current day in Paris time: the real-time data only covers it up to
-    -- the latest quarter hour, its totals are not final.
-    local_date >= cast(current_timestamp at time zone 'Europe/Paris' as date) as is_partial,
+    -- the latest quarter hour, its totals are not final. "Current" is the
+    -- run's logical time (macros/as_of.sql), so a run replayed later rebuilds
+    -- the same rows.
+    local_date >= cast({{ as_of() }} at time zone 'Europe/Paris' as date) as is_partial,
     hours_with_detail,
     consumption_mwh,
     production_mwh,

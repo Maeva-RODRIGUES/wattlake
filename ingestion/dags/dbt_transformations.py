@@ -75,10 +75,14 @@ def dbt_transformations() -> None:
     dbt_build = BashOperator(
         task_id="dbt_build",
         # target/ and logs/ go to a temporary directory, not into the image.
+        # as_of: the run's logical time, rendered by Airflow, from which gold
+        # computes the current day (transform/macros/as_of.sql). A run replayed
+        # later rebuilds the same tables.
         bash_command=(
             "/opt/dbt/venv/bin/dbt build --target audit"
             f" --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR}"
             " --target-path /tmp/dbt/target --log-path /tmp/dbt/logs"
+            """ --vars '{"as_of": "{{ dag_run.run_after.isoformat() }}"}'"""
         ),
         # Same profiles.yml as on a laptop, pointed at the in-cluster Trino.
         env={"TRINO_HOST": "trino.wattlake.svc.cluster.local", "TRINO_PORT": "8080"},

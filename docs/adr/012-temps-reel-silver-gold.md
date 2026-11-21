@@ -56,7 +56,7 @@ Mesures faites sur les deux tables bronze, le 13 novembre 2026 :
 - une colonne `step_hours` (0,5 ou 0,25) donne la durée couverte par les valeurs réalisées de la ligne ;
 - les quatre champs propres au temps réel deviennent des colonnes nullables (`wind_onshore_mw`, `wind_offshore_mw`, `battery_charging_mw`, `battery_discharging_mw`).
 
-**Gold calcule l'énergie comme Σ puissance × `step_hours`.** `energy_mix_daily` compte les heures couvertes (`hours_with_data`) par rapport à la durée du jour (`expected_hours` : 23, 24 ou 25). `is_partial` signale le jour en cours (heure de Paris), et `renewable_share_monthly` le mois en cours.
+**Gold calcule l'énergie comme Σ puissance × `step_hours`.** `energy_mix_daily` compte les heures couvertes (`hours_with_data`) par rapport à la durée du jour (`expected_hours` : 23, 24 ou 25). `is_partial` signale le jour en cours (heure de Paris), et `renewable_share_monthly` le mois en cours. « En cours » s'entend à l'heure logique du run (variable dbt `as_of`, renseignée par le DAG), et non à l'heure de l'horloge : rejouer un run redonne le même gold.
 
 **Le test des jours incomplets n'ignore que les cas connus** ([assert_incomplete_days_are_known.sql](../../transform/tests/assert_incomplete_days_are_known.sql)) :
 

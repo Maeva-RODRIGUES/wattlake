@@ -63,7 +63,9 @@ version: 2
 #
 # 7. Partial day and month. The real-time data covers the current day only up
 #    to its latest quarter hour: is_partial is true for it, and for the current
-#    month. Their totals grow with each run until the day is over.
+#    month. Their totals grow with each run until the day is over. "Current"
+#    is the run's logical time, the dbt variable as_of set by the
+#    dbt_transformations DAG (macros/as_of.sql); without it, the current time.
 
 models:
   - name: energy_mix_daily
@@ -117,7 +119,7 @@ models:
           on 2026-01-01, whose first half hour is missing at the source, and on
           the current day.
       - name: is_partial
-        description: True for the current day in Paris time, which the real-time data covers only up to its latest quarter hour.
+        description: True for the current day in Paris time (at the run's logical time, variable as_of), which the real-time data covers only up to its latest quarter hour.
         data_tests:
           - not_null
       - name: consumption_mwh
@@ -284,6 +286,10 @@ unit_tests:
       hours, 23 hours, complete. A day counted as 24 hours, or energy computed
       from an hourly average, would fail.
     model: energy_mix_daily
+    # A fixed "now", after the three days: none of them is partial.
+    overrides:
+      vars:
+        as_of: "2026-11-01T00:00:00+00:00"
     given:
       - input: ref('eco2mix_national')
         format: csv
@@ -293,3 +299,25 @@ unit_tests:
         - {local_date: "2025-10-26", expected_hours: 25, hours_with_data: 24, is_complete: false, is_partial: false, production_mwh: 24000}
         - {local_date: "2026-10-25", expected_hours: 25, hours_with_data: 25, is_complete: true, is_partial: false, production_mwh: 25000}
         - {local_date: "2026-03-29", expected_hours: 23, hours_with_data: 23, is_complete: true, is_partial: false, production_mwh: 23000}
+
+  - name: is_partial_follows_the_runs_logical_time
+    description: >
+      The run's logical time is 2026-03-28 23:30 UTC, already 2026-03-29 in
+      Paris (UTC+1). The current day is 2026-03-29 in Paris time: it is
+      partial, the day before is not. A model reading the clock
+      (current_timestamp, months later: no partial day), or the UTC date
+      (2026-03-28 partial), would fail: the result must depend on the run,
+      never on when it is replayed.
+    model: energy_mix_daily
+    overrides:
+      vars:
+        as_of: "2026-03-28T23:30:00Z"
+    given:
+      - input: ref('eco2mix_national')
+        rows:
+          - {timestamp_utc: "2026-03-28 10:00:00 UTC", local_date: "2026-03-28", step_hours: 0.5, nuclear_mw: 400, wind_mw: 0, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0}
+          - {timestamp_utc: "2026-03-28 23:00:00 UTC", local_date: "2026-03-29", step_hours: 0.5, nuclear_mw: 400, wind_mw: 0, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0}
+    expect:
+      rows:
+        - {local_date: "2026-03-28", is_partial: false}
+        - {local_date: "2026-03-29", is_partial: true}
