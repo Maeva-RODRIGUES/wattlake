@@ -122,7 +122,7 @@ make streaming-image streaming-image-import
 
 Métriques et logs de la stack ([ADR 011](../docs/adr/011-supervision.md)), dans le namespace `monitoring`, en trois Applications Argo CD :
 
-- **`monitoring`** : `kube-prometheus-stack` 92.14.1 ([monitoring/values.yaml](monitoring/values.yaml)). Prometheus garde 7 jours de métriques. Grafana a son mot de passe admin dans le Secret `grafana-admin`. Alertmanager est désactivé. Les tableaux de bord versionnés sont dans [monitoring/dashboards/](monitoring/dashboards/).
+- **`monitoring`** : `kube-prometheus-stack` 92.14.1 ([monitoring/values.yaml](monitoring/values.yaml)). Prometheus garde 7 jours de métriques. Grafana a son mot de passe admin dans le Secret `grafana-admin`. Alertmanager reçoit les alertes ([ADR 016](../docs/adr/016-alertes.md)). Les tableaux de bord versionnés sont dans [monitoring/dashboards/](monitoring/dashboards/), les règles d'alerte dans [monitoring/rules/](monitoring/rules/).
 - **`loki`** : Loki 7.5.0 en mode `SingleBinary` ([loki/values.yaml](loki/values.yaml)), sur un volume de 5 Gi, avec 7 jours de rétention.
 - **`alloy`** : Alloy 1.14.4 ([alloy/values.yaml](alloy/values.yaml)), un seul pod qui lit les logs de tous les pods par l'API Kubernetes et les envoie à Loki.
 
@@ -145,6 +145,26 @@ kubectl --context k3d-wattlake -n monitoring get secret grafana-admin \
 ```
 
 Un tableau de bord se modifie dans le dépôt : `wattlake.json`, puis commit. Grafana n'a pas de volume, et une modification faite dans son interface est perdue au redémarrage.
+
+### Alertes
+
+Prometheus évalue les règles par défaut de `kube-prometheus-stack`, qui couvrent la plateforme, et cinq règles propres aux pipelines, dans [monitoring/rules/wattlake-alerts.yaml](monitoring/rules/wattlake-alerts.yaml) ([ADR 016](../docs/adr/016-alertes.md)) :
+
+| Alerte | Se déclenche quand |
+| --- | --- |
+| `WattlakeWriterLagging` | des messages attendent le writer depuis plus de 15 minutes |
+| `WattlakeRealtimeStreamStalled` | aucun nouveau message temps réel depuis 1 h 30 |
+| `WattlakeKafkaMetricsMissing` | le retard du writer n'est plus collecté |
+| `WattlakeDagRunFailed` | un run de DAG a échoué dans l'heure |
+| `WattlakeDbtNotPublished` | silver et gold n'ont pas été publiés depuis 2 heures (critique) |
+
+Les alertes actives se lisent dans Grafana (menu Alerting, source Alertmanager) ou dans l'interface d'Alertmanager, qui permet aussi de les mettre en sourdine :
+
+```bash
+kubectl --context k3d-wattlake -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9093:9093   # http://127.0.0.1:9093
+```
+
+`WattlakeDagRunFailed` se déclenche presque chaque matin, au réveil de l'ordinateur : la veille est incomplète (le flux s'est arrêté pendant la nuit), et le Write-Audit-Publish ne publie pas tant que le producteur n'a pas rattrapé la nuit. Elle se résout seule une heure après le dernier échec.
 
 ## Maintenance des tables Iceberg
 

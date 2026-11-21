@@ -125,6 +125,7 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 - [x] Maintenance des tables Iceberg : compactage et nettoyage par Nessie GC, chaque jour (ADR 013)
 - [x] DNS de secours pour les noms externes après un changement de réseau (ADR 014)
 - [x] Rechargement hebdomadaire de l'historique récent, pour les données consolidées et définitives publiées en retard (ADR 015)
+- [x] Alertes sur les pipelines : retard du writer, flux arrêté, DAG en échec, silver et gold non publiés (ADR 016)
 
 ## Démarrer
 
@@ -224,6 +225,7 @@ kubectl --context k3d-wattlake -n wattlake port-forward svc/trino 8080:8080     
 kubectl --context k3d-wattlake -n wattlake port-forward svc/nessie 19120:19120  # Nessie : http://127.0.0.1:19120
 kubectl --context k3d-wattlake -n wattlake port-forward svc/airflow-api-server 8081:8080  # Airflow : http://127.0.0.1:8081
 kubectl --context k3d-wattlake -n monitoring port-forward svc/monitoring-grafana 3000:80   # Grafana : http://127.0.0.1:3000
+kubectl --context k3d-wattlake -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9093:9093   # Alertmanager : http://127.0.0.1:9093
 
 # Mot de passe de l'utilisateur « admin » d'Airflow
 kubectl --context k3d-wattlake -n wattlake get secret airflow-credentials \
@@ -315,10 +317,11 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 013 : maintenance des tables Iceberg](docs/adr/013-maintenance-iceberg.md), ou pourquoi l'`optimize` de Trino pour le compactage et Nessie GC plutôt que `expire_snapshots` pour le nettoyage, avec 7 jours de rétention.
 - [ADR 014 : DNS de secours pour les noms externes](docs/adr/014-dns-de-secours.md), ou pourquoi des blocs de zone dans `coredns-custom`, avec le DNS local d'abord et des DNS publics en secours, plutôt que de recréer le cluster avec un autre CoreDNS.
 - [ADR 015 : rechargement de l'historique récent](docs/adr/015-rechargement-historique.md), ou pourquoi un DAG hebdomadaire qui recharge les 24 derniers mois en n'écrivant que les mois modifiés, plutôt que de relancer les exécutions `skipped` du DAG mensuel.
+- [ADR 016 : alertes](docs/adr/016-alertes.md), ou pourquoi des règles Prometheus versionnées et Alertmanager plutôt que les alertes de Grafana, et comment les règles évitent les fausses alertes des compteurs StatsD.
 
 ## Limites et suites possibles
 
-- **Pas d'alertes.** Alertmanager est désactivé : le retard du writer et les échecs de DAG se lisent dans Grafana, sans notification (ADR 011).
+- **Pas encore de notification.** Les alertes se lisent dans Alertmanager et dans Grafana, sans être envoyées nulle part (ADR 016).
 - **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS. CoreDNS passe alors par des DNS publics pour les noms dont la stack a besoin (ADR 014), mais le téléchargement des images reste bloqué jusqu'à `make cluster-restart` : `make cluster-dns-check` le détecte (voir [infra/README.md](infra/README.md)).
 
 ## Ce que je ferais en production
@@ -328,7 +331,7 @@ Ce projet tourne en local, avec des choix simplifiés. Sur une plateforme en pro
 - une base PostgreSQL gérée, avec haute disponibilité et sauvegardes, pour Airflow et Nessie, voire une instance par composant (voir l'ADR 007) ;
 - une gestion des secrets centralisée : External Secrets et le gestionnaire de secrets du cloud, à la place de `make secrets` (voir l'ADR 006) ;
 - de la haute disponibilité sur le stockage objet, le coordinateur Trino et Kafka (trois brokers, réplication 3) ;
-- des alertes sur la fraîcheur et la qualité des données, et Loki sur un stockage objet (ADR 011) ;
+- des alertes envoyées à une astreinte (PagerDuty, Opsgenie), une mesure de fraîcheur lue dans les tables elles-mêmes, et Loki sur un stockage objet (ADR 011 et 016) ;
 - un Schema Registry si d'autres producteurs ou consommateurs utilisent Kafka (ADR 009).
 
 ## Auteure

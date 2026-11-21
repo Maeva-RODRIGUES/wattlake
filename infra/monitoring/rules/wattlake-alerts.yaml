@@ -1,0 +1,102 @@
+# Alert rules for the WattLake pipelines (docs/adr/016-alertes.md), picked up
+# by Prometheus like every PrometheusRule of the cluster
+# (ruleSelectorNilUsesHelmValues: false in infra/monitoring/values.yaml).
+# The default rules of kube-prometheus-stack cover the platform itself
+# (TargetDown, KubePodCrashLooping, KubePersistentVolumeFillingUp...).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: wattlake-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: wattlake
+spec:
+  groups:
+    - name: wattlake-streaming
+      rules:
+        # The writer commits a batch every 5 minutes at most: messages still
+        # waiting after 15 minutes mean it is stuck or failing to commit.
+        - alert: WattlakeWriterLagging
+          expr: sum(kafka_consumergroup_lag{consumergroup="wattlake-writer"}) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: The real-time writer is behind Kafka
+            description: >-
+              {{ $value }} messages of eco2mix-realtime have waited more than
+              15 minutes to be written to bronze.eco2mix_national_realtime.
+              Check the writer's logs (Grafana, WattLake dashboard).
+
+        # RTE refreshes the real-time dataset about every 15 minutes, and the
+        # producer publishes each refresh. No new message for 1 h 30 means the
+        # producer or the API is down. The writer's lag stays at 0 in that
+        # case, so WattlakeWriterLagging cannot see it.
+        - alert: WattlakeRealtimeStreamStalled
+          expr: sum(increase(kafka_topic_partition_current_offset{topic="eco2mix-realtime"}[1h])) == 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: No new real-time message for 1 h 30
+            description: >-
+              The producer has published nothing to eco2mix-realtime for 1 h 30.
+              Check the producer's logs and the eCO2mix API.
+
+        # Without the Kafka Exporter's series, the two rules above return
+        # nothing and never fire: their silence must not pass for health.
+        - alert: WattlakeKafkaMetricsMissing
+          expr: absent(kafka_consumergroup_lag{consumergroup="wattlake-writer"})
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: The writer's consumer lag is not collected
+            description: >-
+              Prometheus has no kafka_consumergroup_lag series for the
+              wattlake-writer group: the streaming alerts are blind. Check the
+              Kafka Exporter pod and the writer.
+
+    - name: wattlake-airflow
+      rules:
+        # airflow_dagrun_failed_count counts failed DAG runs (StatsD summary of
+        # dagrun.duration.failed). StatsD only creates a series on the first
+        # event, and increase() needs two samples: the right-hand side catches
+        # a series that did not exist an hour ago, the first failure since the
+        # StatsD exporter started.
+        - alert: WattlakeDagRunFailed
+          expr: >-
+            increase(airflow_dagrun_failed_count[1h]) > 0
+            or (airflow_dagrun_failed_count unless airflow_dagrun_failed_count offset 1h)
+          labels:
+            severity: warning
+          annotations:
+            summary: "DAG {{ $labels.dag_id }} failed"
+            description: >-
+              A run of {{ $labels.dag_id }} failed in the last hour. For
+              dbt_transformations, a failed data test blocks the publication of
+              silver and gold (Write-Audit-Publish, ADR 008): main keeps the
+              last tested version. Check the run in the Airflow UI.
+
+        # dbt_transformations runs every hour and publishes silver and gold
+        # only when every test passes. airflow_dagrun_duration_count counts its
+        # successful runs. The rule needs the series to exist 2 h ago, so that a
+        # StatsD exporter restart (counter back to 0, a single sample) is not
+        # taken for a missing publication; absent_over_time covers the case
+        # where no run has succeeded since that restart.
+        - alert: WattlakeDbtNotPublished
+          expr: >-
+            (
+              increase(airflow_dagrun_duration_count{dag_id="dbt_transformations"}[2h]) == 0
+              and airflow_dagrun_duration_count{dag_id="dbt_transformations"} offset 2h
+            )
+            or absent_over_time(airflow_dagrun_duration_count{dag_id="dbt_transformations"}[2h])
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: Silver and gold have not been published for 2 hours
+            description: >-
+              No dbt_transformations run has succeeded for 2 hours: silver and
+              gold on main are getting stale. Check the failed runs (data tests,
+              Trino, Nessie) in the Airflow UI.

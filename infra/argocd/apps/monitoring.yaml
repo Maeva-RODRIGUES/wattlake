@@ -1,5 +1,6 @@
 # Argo CD Application for the metrics stack: Prometheus Operator, Prometheus,
-# Grafana (docs/adr/011-supervision.md). Synced automatically from the main branch.
+# Alertmanager, Grafana (docs/adr/011-supervision.md, docs/adr/016-alertes.md).
+# Synced automatically from the main branch.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -28,6 +29,10 @@ spec:
     - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
       targetRevision: main
       path: infra/monitoring/dashboards
+    # The WattLake alert rules (PrometheusRule, docs/adr/016-alertes.md).
+    - repoURL: https://github.com/Maeva-RODRIGUES/wattlake.git
+      targetRevision: main
+      path: infra/monitoring/rules
   # Automated sync: the cluster follows the main branch. prune deletes what is
   # removed from Git, selfHeal reverts changes made by hand in the cluster.
   syncPolicy:

@@ -3,9 +3,44 @@
 # Chart: kube-prometheus-stack 92.14.1 (version pinned in infra/argocd/apps/monitoring.yaml).
 # Deployed by Argo CD in the "monitoring" namespace, from the main branch.
 
-# No alerting in a local cluster: Alertmanager would have no one to notify.
+# Alertmanager receives the alerts of Prometheus: the default rules of the chart
+# and the WattLake ones (infra/monitoring/rules/, docs/adr/016-alertes.md).
 alertmanager:
-  enabled: false
+  enabled: true
+  config:
+    route:
+      # One notification per alert name and namespace, so that several pods
+      # failing the same way are grouped.
+      group_by: [alertname, namespace]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      # No notification channel yet: alerts are visible in the Alertmanager
+      # and Grafana web interfaces only.
+      receiver: "null"
+      routes:
+        # Watchdog always fires, to prove that the alerting pipeline works:
+        # it is never notified.
+        - matchers: ['alertname = "Watchdog"']
+          receiver: "null"
+    # A critical alert silences the warning alerts of the same name and
+    # namespace (the chart's default inhibition rule).
+    inhibit_rules:
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity =~ "warning|info"']
+        equal: [namespace, alertname]
+    receivers:
+      - name: "null"
+  alertmanagerSpec:
+    # Notification log and silences live on the pod's disk: a restart forgets
+    # the silences, which is acceptable on a local cluster.
+    retention: 120h
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
 
 # k3s runs the control plane in a single process and does not expose these
 # components' metrics endpoints: their targets would always be down.
@@ -92,11 +127,8 @@ grafana:
   # interface are lost on restart.
   persistence:
     enabled: false
-  sidecar:
-    datasources:
-      # Alertmanager is disabled above: no data source pointing to it.
-      alertmanager:
-        enabled: false
+  # The sidecar adds the Alertmanager data source (enabled by default): firing
+  # alerts and silences are visible in Grafana, next to the metrics.
   # Logs, next to the metrics (infra/loki/values.yaml).
   additionalDataSources:
     - name: Loki

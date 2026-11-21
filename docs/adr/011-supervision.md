@@ -84,7 +84,7 @@ Le cluster est local, avec un seul développeur, et assez de mémoire (environ 6
 - **Environ 1,5 à 2 Gio de mémoire en plus.**
 - **Modifier les paramètres de Kafka redémarre le broker**, pour les métriques comme pour le reste. Le producteur et le writer reprennent seuls (ADR 009 et 010).
 - **Les tableaux de bord se modifient dans le dépôt.** Une modification faite dans l'interface de Grafana est perdue au redémarrage : Grafana n'a pas de volume.
-- **Aucune alerte pour l'instant.** En production, j'activerais Alertmanager, avec des règles sur le retard du writer, les échecs de DAG et la disponibilité des composants, et je stockerais Loki dans un stockage objet.
+- **Aucune alerte dans cette décision.** Alertmanager et les règles sur le retard du writer, l'arrêt du flux, les échecs de DAG et les publications dbt font l'objet de l'ADR 016. En production, je stockerais aussi Loki dans un stockage objet.
 
 ## Sources
 
