@@ -15,7 +15,7 @@ requires-python = ">=3.13"
 # kubernetes starts the Nessie GC Job from the iceberg_maintenance DAG (ADR 013).
 dependencies = [
     "httpx==0.28.1",
-    "kubernetes==35.0.0",
+    "kubernetes==37.0.2",
     "pyarrow==24.0.0",
     "pyiceberg[pyarrow]==0.12.0",
     "s3fs==2026.4.0",
