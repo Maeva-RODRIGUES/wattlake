@@ -1,4 +1,4 @@
-# ADR 017 : reconstruction incrémentale de silver
+# ADR 017 : reconstruction incrémentale de silver et gold
 
 - **Statut** : accepté
 - **Date** : novembre 2026
@@ -64,7 +64,23 @@ Un test unitaire en mode incrémental (`is_incremental: true`, une table `this` 
 - **Un run n'écrit plus que les quarts d'heure modifiés**, quelques Ko au lieu de 14 Mo. Les anciennes copies de silver disparaîtront avec la rétention de 7 jours.
 - **Le `merge` d'Iceberg laisse de petits fichiers et des fichiers de suppression** : silver doit être compacté chaque jour, comme bronze (ADR 013).
 - **Un quart d'heure supprimé de bronze resterait dans silver** : l'anti-jointure ne voit que les lignes présentes. La source ne retire pas de quart d'heure aujourd'hui (un rechargement remplace les lignes d'un mois par d'autres, pour les mêmes quarts d'heure). Une reconstruction complète hebdomadaire sert de filet de sécurité.
-- **Gold reste reconstruit en entier** pour l'instant. `energy_mix_daily` peut suivre le même principe, sur les jours touchés, à condition de recalculer aussi les jours encore marqués partiels (ADR 012).
+
+## Mise à jour : gold quotidien
+
+`energy_mix_daily` suit le même principe, par jour (`merge` sur `local_date`). `renewable_share_monthly` reste reconstruite en entier : 179 lignes, 13 Ko.
+
+**Une colonne de plus, `last_ingested_at`** : la plus récente ingestion des lignes silver du jour. Une ligne silver modifiée est fusionnée avec l'heure d'ingestion de sa nouvelle ligne bronze, plus récente que toutes celles du jour : `last_ingested_at` avance. Un jour est donc recalculé quand silver a une ligne ingérée après son `last_ingested_at`, ou quand gold n'a pas encore ce jour.
+
+**Les jours encore partiels sont recalculés aussi** : à minuit, la veille devient complète sans qu'aucune ligne n'arrive (ADR 012). Sans cela, `is_partial` resterait vrai pour toujours sur chaque jour passé.
+
+**La transition** : la table actuelle n'a pas `last_ingested_at`. La macro `this_has_column` le détecte : le premier run recalcule alors tous les jours, et `on_schema_change: append_new_columns` ajoute la colonne. Un piège évité en chemin : un test unitaire qui simule la table (`this`) par des lignes YAML est vérifié contre les colonnes de la table réelle, et aurait échoué tant que la colonne n'existe pas. Or `dbt build` lance les tests unitaires avant le modèle : le premier run après le déploiement aurait échoué, la colonne ne serait jamais apparue, et la publication serait restée bloquée. La table simulée est donc écrite en SQL (`format: sql`), qui n'est pas vérifié ainsi.
+
+Vérifié sur les données du cluster, sans écriture :
+
+- le premier lot couvre les 5 441 jours, identiques au gold actuel sur ses 24 colonnes, avec `last_ingested_at` rempli ;
+- en prenant ce lot comme gold, le run suivant ne recalculerait qu'un jour : le jour en cours, partiel.
+
+Le test unitaire en mode incrémental couvre un jour révisé, un jour partiel devenu complet, un jour nouveau et un jour inchangé. Ne recalculer que les jours modifiés, ou que les jours absents, le fait échouer.
 
 ## Sources
 

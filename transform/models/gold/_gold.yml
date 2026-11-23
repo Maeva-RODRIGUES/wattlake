@@ -122,6 +122,10 @@ models:
         description: True for the current day in Paris time (at the run's logical time, variable as_of), which the real-time data covers only up to its latest quarter hour.
         data_tests:
           - not_null
+      - name: last_ingested_at
+        description: >
+          Latest ingestion time of the day's silver rows. The incremental build
+          recomputes a day when silver has a row ingested after it (ADR 017).
       - name: consumption_mwh
         description: Realised consumption, MWh.
         meta: &mwh {unit: MWh, quantity: energy, computed_as: "sum(power_mw * step_hours)"}
@@ -261,6 +265,9 @@ unit_tests:
       400 MW wind cover 0.25 h each, so 2 * 800 * 0.25 = 400 MWh and 0.5 hour
       with data.
     model: energy_mix_daily
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: ref('eco2mix_national')
         rows:
@@ -286,8 +293,10 @@ unit_tests:
       hours, 23 hours, complete. A day counted as 24 hours, or energy computed
       from an hourly average, would fail.
     model: energy_mix_daily
-    # A fixed "now", after the three days: none of them is partial.
+    # A full build, with a fixed "now" after the three days: none of them is partial.
     overrides:
+      macros:
+        is_incremental: false
       vars:
         as_of: "2026-11-01T00:00:00+00:00"
     given:
@@ -310,6 +319,8 @@ unit_tests:
       never on when it is replayed.
     model: energy_mix_daily
     overrides:
+      macros:
+        is_incremental: false
       vars:
         as_of: "2026-03-28T23:30:00Z"
     given:
@@ -321,3 +332,45 @@ unit_tests:
       rows:
         - {local_date: "2026-03-28", is_partial: false}
         - {local_date: "2026-03-29", is_partial: true}
+
+  - name: incremental_run_recomputes_changed_and_partial_days
+    description: >
+      Incremental run at 2026-11-21 12:00 UTC (as_of). Gold already holds
+      2026-11-18 to 2026-11-20. Recomputed: 2026-11-19, which silver revised
+      (a row ingested at 2026-11-21 10:00, after the day's last_ingested_at):
+      300 MWh from both quarter hours, last_ingested_at moves forward;
+      2026-11-20, unchanged in silver but still marked partial: it is over
+      now, and turns complete; 2026-11-21, not in gold yet, partial. Left out:
+      2026-11-18, whose silver rows gold has already summed. Recomputing only
+      the days with new rows, or only the missing days, would fail.
+    model: energy_mix_daily
+    overrides:
+      macros:
+        is_incremental: true
+        this_has_column: true
+      vars:
+        as_of: "2026-11-21T12:00:00Z"
+    given:
+      # SQL rather than rows: dbt checks row fixtures against the columns of
+      # the existing table, which lacks last_ingested_at until the first
+      # incremental run adds it.
+      - input: this
+        format: sql
+        rows: |
+          select date '2026-11-18' as local_date, false as is_partial, timestamp '2026-11-19 00:10:00 UTC' as last_ingested_at
+          union all
+          select date '2026-11-19', false, timestamp '2026-11-19 23:50:00 UTC'
+          union all
+          select date '2026-11-20', true, timestamp '2026-11-20 23:50:00 UTC'
+      - input: ref('eco2mix_national')
+        rows:
+          - {timestamp_utc: "2026-11-18 10:00:00 UTC", local_date: "2026-11-18", step_hours: 0.25, nuclear_mw: 400, wind_mw: 0, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, ingested_at: "2026-11-19 00:10:00 UTC"}
+          - {timestamp_utc: "2026-11-19 10:00:00 UTC", local_date: "2026-11-19", step_hours: 0.25, nuclear_mw: 400, wind_mw: 0, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, ingested_at: "2026-11-19 23:50:00 UTC"}
+          - {timestamp_utc: "2026-11-19 10:15:00 UTC", local_date: "2026-11-19", step_hours: 0.25, nuclear_mw: 800, wind_mw: 0, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, ingested_at: "2026-11-21 10:00:00 UTC"}
+          - {timestamp_utc: "2026-11-20 10:00:00 UTC", local_date: "2026-11-20", step_hours: 0.25, nuclear_mw: 400, wind_mw: 0, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, ingested_at: "2026-11-20 23:50:00 UTC"}
+          - {timestamp_utc: "2026-11-21 10:00:00 UTC", local_date: "2026-11-21", step_hours: 0.25, nuclear_mw: 400, wind_mw: 0, solar_mw: 0, hydro_mw: 0, bioenergy_mw: 0, gas_mw: 0, coal_mw: 0, fuel_oil_mw: 0, ingested_at: "2026-11-21 11:00:00 UTC"}
+    expect:
+      rows:
+        - {local_date: "2026-11-19", is_partial: false, production_mwh: 300, last_ingested_at: "2026-11-21 10:00:00 UTC"}
+        - {local_date: "2026-11-20", is_partial: false, production_mwh: 100, last_ingested_at: "2026-11-20 23:50:00 UTC"}
+        - {local_date: "2026-11-21", is_partial: true, production_mwh: 100, last_ingested_at: "2026-11-21 11:00:00 UTC"}
