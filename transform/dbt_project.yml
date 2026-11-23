@@ -13,9 +13,11 @@ clean-targets: ["target", "dbt_packages"]
 models:
   wattlake:
     silver:
-      # Rebuilt in full on each run (about 500,000 rows). "replace" makes Trino
-      # use CREATE OR REPLACE TABLE: readers see the old or the new table,
-      # never a missing or half-written one.
+      # Default for silver models: rebuilt in full on each run. "replace" makes
+      # Trino use CREATE OR REPLACE TABLE: readers see the old or the new
+      # table, never a missing or half-written one. eco2mix_national overrides
+      # it: incremental, merged on timestamp_utc (its config block, ADR 017);
+      # "replace" still applies to its full refreshes.
       +materialized: table
       +on_table_exists: replace
     gold:

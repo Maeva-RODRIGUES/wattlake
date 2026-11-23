@@ -1,0 +1,74 @@
+# ADR 017 : reconstruction incrémentale de silver
+
+- **Statut** : accepté
+- **Date** : novembre 2026
+
+## Contexte
+
+Le DAG `dbt_transformations` reconstruit silver et gold en entier, toutes les heures (`CREATE OR REPLACE TABLE`). Le calcul est rapide : 3,5 s pour silver (522 231 lignes), 0,5 s pour gold. Le stockage, lui, ne l'est pas. Mesuré dans SeaweedFS le 23 novembre 2026 :
+
+| Namespace | Table vivante | Sur disque |
+| --- | --- | --- |
+| `silver` | 14,1 Mo | 1 476 Mo |
+| `gold` | 0,39 Mo | 161 Mo |
+| `bronze` | 14,5 Mo | 102 Mo |
+
+Chaque run écrit une copie complète de silver, soit 14 Mo de fichiers par heure. Nessie GC garde tout ce que référence un commit des 7 derniers jours (ADR 013) : environ 105 copies de silver. **1,6 Go des 1,74 Go du lac sont d'anciennes copies de silver et gold.** Entre deux runs, pourtant, seules quelques lignes changent : un rafraîchissement du temps réel en apporte 14 en médiane (ADR 010), un mois d'historique rechargé environ 1 500.
+
+## Critères
+
+1. **Résultat identique** à une reconstruction complète, ligne pour ligne.
+2. **Rien de manqué**, même quand deux chargements se croisent (DAG mensuel et rechargement du dimanche, ADR 015) ou qu'un commit arrive tard.
+3. **Write-Audit-Publish inchangé** (ADR 008) : le modèle écrit sur la branche `audit`, les tests décident de la publication.
+4. **Simple à expliquer et à tester.**
+
+## Options étudiées
+
+### Réduire le volume
+
+| Option | Avantages | Limites |
+| --- | --- | --- |
+| Garder la reconstruction complète, raccourcir la rétention de Nessie GC | Aucun changement de modèle | La rétention est globale : bronze perd aussi son historique, et le voyage dans le temps se réduit d'autant |
+| Reconstruire moins souvent | Simple | Silver et gold moins frais, alors que le temps réel arrive tous les quarts d'heure |
+| **Silver incrémental (`merge`)** | Quelques Ko par run au lieu de 14 Mo | Un modèle plus complexe, des fichiers de suppression à compacter |
+
+### Repérer les lignes à recalculer
+
+| Option | Avantages | Limites |
+| --- | --- | --- |
+| Filigrane : lignes bronze ingérées après la plus récente de silver | Une comparaison simple | Un chargement commité après des lignes plus récentes est manqué. Avec une marge (3 h), tout le dernier chargement d'historique est recalculé à chaque run : l'historique entier, chargé le 9 novembre en 37 minutes, revenait dans chaque lot (514 241 lignes, mesuré) |
+| **Anti-jointure : lignes bronze sans ligne silver de même quart d'heure ingérée au même moment ou plus tard** | Exact, ligne par ligne, sans marge ni course entre chargements | Deux jointures d'environ 500 000 lignes à chaque run (quelques secondes, sans écriture) |
+
+## Décision
+
+**`eco2mix_national` devient un modèle incrémental** : `materialized: incremental`, `incremental_strategy: merge`, `unique_key: timestamp_utc`, `on_schema_change: fail`.
+
+**À chaque run, les quarts d'heure à recalculer sont ceux d'une ligne bronze que silver n'a pas encore vue** : aucune ligne silver pour le même quart d'heure n'a un `ingested_at` égal ou plus récent. Pour ces quarts d'heure seulement, le modèle relit **toutes** les lignes bronze des deux sources, et applique la logique complète : la dernière version temps réel, puis la priorité de l'historique. Le lot est fusionné dans silver sur `timestamp_utc`.
+
+- **Une nouvelle version temps réel** (révision de RTE) est plus récente que la ligne de silver : son quart d'heure est recalculé, et la version la plus récente l'emporte.
+- **Un mois d'historique rechargé** a un `ingested_at` plus récent que les lignes de silver : ses quarts d'heure sont recalculés, et la valeur consolidée remplace la valeur temps réel par le `merge`.
+- **Une ligne déjà fusionnée** a le même `ingested_at` que la ligne de silver : elle n'est jamais recalculée.
+
+**`dbt build --full-refresh` reconstruit la table en entier** (`CREATE OR REPLACE TABLE`, comme avant).
+
+Vérifié sur les données du cluster, sans écriture, en exécutant le lot compilé dans Trino :
+
+- le lot contient 14 lignes, exactement celles du dernier lot du writer, ingérées après le run précédent ;
+- ces 14 lignes sont identiques à celles d'une reconstruction complète (`EXCEPT` vide) ;
+- la première version, à filigrane et marge, recalculait 514 241 lignes : elle a été abandonnée pour l'anti-jointure.
+
+Un test unitaire en mode incrémental (`is_incremental: true`, une table `this` simulée) couvre une version temps réel plus récente, un quart d'heure nouveau, un rechargement d'historique ingéré avant les dernières lignes temps réel, et deux lignes déjà vues. Comparer les quarts d'heure seuls, ou exiger une ligne silver strictement plus récente, le fait échouer.
+
+## Conséquences
+
+- **Un run n'écrit plus que les quarts d'heure modifiés**, quelques Ko au lieu de 14 Mo. Les anciennes copies de silver disparaîtront avec la rétention de 7 jours.
+- **Le `merge` d'Iceberg laisse de petits fichiers et des fichiers de suppression** : silver doit être compacté chaque jour, comme bronze (ADR 013).
+- **Un quart d'heure supprimé de bronze resterait dans silver** : l'anti-jointure ne voit que les lignes présentes. La source ne retire pas de quart d'heure aujourd'hui (un rechargement remplace les lignes d'un mois par d'autres, pour les mêmes quarts d'heure). Une reconstruction complète hebdomadaire sert de filet de sécurité.
+- **Gold reste reconstruit en entier** pour l'instant. `energy_mix_daily` peut suivre le même principe, sur les jours touchés, à condition de recalculer aussi les jours encore marqués partiels (ADR 012).
+
+## Sources
+
+- dbt, modèles incrémentaux et stratégie `merge`. https://docs.getdbt.com/docs/build/incremental-models
+- dbt-trino 1.10, stratégies incrémentales sur Iceberg (`append`, `delete+insert`, `merge`). https://github.com/starburstdata/dbt-trino
+- dbt, tests unitaires des modèles incrémentaux (`overrides.macros.is_incremental`, entrée `this`). https://docs.getdbt.com/docs/build/unit-tests
+- Trino, `MERGE` sur le connecteur Iceberg. https://trino.io/docs/current/connector/iceberg.html

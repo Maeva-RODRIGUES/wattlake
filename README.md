@@ -62,7 +62,7 @@ flowchart LR
     S3 --- RT
 ```
 
-Les tables sont au format Iceberg, dans le catalogue Nessie et sur SeaweedFS. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement, et chaque heure, déclenche le DAG dbt : il reconstruit silver et gold sur une branche Nessie, lance les tests, et ne fusionne dans `main` que s'ils passent (ADR 008). En parallèle, un producteur publie les mesures temps réel dans Kafka, et un writer les ajoute à une table bronze Iceberg, exactement une fois, en un commit toutes les 5 minutes au plus (ADR 009 et 010). Silver réunit l'historique et la dernière version de chaque quart d'heure temps réel, l'historique restant prioritaire, et gold calcule les énergies selon le pas de temps de chaque source, jusqu'au jour en cours (ADR 012).
+Les tables sont au format Iceberg, dans le catalogue Nessie et sur SeaweedFS. Le DAG bronze charge l'historique par PyIceberg, puis chaque chargement, et chaque heure, déclenche le DAG dbt : il met à jour silver (seuls les quarts d'heure modifiés, ADR 017) et reconstruit gold sur une branche Nessie, lance les tests, et ne fusionne dans `main` que s'ils passent (ADR 008). En parallèle, un producteur publie les mesures temps réel dans Kafka, et un writer les ajoute à une table bronze Iceberg, exactement une fois, en un commit toutes les 5 minutes au plus (ADR 009 et 010). Silver réunit l'historique et la dernière version de chaque quart d'heure temps réel, l'historique restant prioritaire, et gold calcule les énergies selon le pas de temps de chaque source, jusqu'au jour en cours (ADR 012).
 
 ### Plateforme
 
@@ -322,6 +322,7 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 - [ADR 014 : DNS de secours pour les noms externes](docs/adr/014-dns-de-secours.md), ou pourquoi des blocs de zone dans `coredns-custom`, avec le DNS local d'abord et des DNS publics en secours, plutôt que de recréer le cluster avec un autre CoreDNS.
 - [ADR 015 : rechargement de l'historique récent](docs/adr/015-rechargement-historique.md), ou pourquoi un DAG hebdomadaire qui recharge les 24 derniers mois en n'écrivant que les mois modifiés, plutôt que de relancer les exécutions `skipped` du DAG mensuel.
 - [ADR 016 : alertes](docs/adr/016-alertes.md), ou pourquoi des règles Prometheus versionnées et Alertmanager plutôt que les alertes de Grafana, et comment les règles évitent les fausses alertes des compteurs StatsD.
+- [ADR 017 : reconstruction incrémentale de silver](docs/adr/017-reconstruction-incrementale.md), ou pourquoi un `merge` des seuls quarts d'heure modifiés, repérés par une anti-jointure plutôt qu'un filigrane, alors que 1,6 Go des 1,74 Go du lac étaient d'anciennes copies de silver et gold.
 
 ## Limites et suites possibles
 

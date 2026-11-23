@@ -294,6 +294,10 @@ unit_tests:
       with the same date_heure as the real 03:30 row. The model must keep 03:30
       only, and turn the text value "ND" into null.
     model: eco2mix_national
+    # A full build: the whole logic over the mocked bronze rows.
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: source('bronze', 'eco2mix_national_history')
         rows:
@@ -315,6 +319,10 @@ unit_tests:
       recent _source_updated_at wins. Real-time rows cover 0.25 h, history rows
       0.5 h, and the run-of-river value published as text becomes an integer.
     model: eco2mix_national
+    # A full build: the whole logic over the mocked bronze rows.
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: source('bronze', 'eco2mix_national_history')
         rows:
@@ -338,6 +346,10 @@ unit_tests:
       rows: 01:00 UTC is 02:00 in winter time. Every row belongs to local date
       2025-10-26, including 23:30 UTC the day before.
     model: eco2mix_national
+    # A full build: the whole logic over the mocked bronze rows.
+    overrides:
+      macros:
+        is_incremental: false
     given:
       - input: source('bronze', 'eco2mix_national_history')
         rows:
@@ -353,3 +365,43 @@ unit_tests:
         - {timestamp_utc: "2025-10-26 01:00:00 UTC", local_date: "2025-10-26", step_hours: 0.5, consumption_mw: 43118}
         - {timestamp_utc: "2025-10-26 01:30:00 UTC", local_date: "2025-10-26", step_hours: 0.5, consumption_mw: 42385}
         - {timestamp_utc: "2025-10-26 02:00:00 UTC", local_date: "2025-10-26", step_hours: 0.5, consumption_mw: 40960}
+
+  - name: incremental_run_recomputes_only_new_quarter_hours
+    description: >
+      Incremental run. A bronze row is new when silver has no row for its
+      quarter hour ingested at the same time or later. Recomputed:
+      2026-08-01 10:00 UTC, where a history reload ingested at 05:00 (before
+      the latest real-time rows: a watermark on the newest silver row would
+      skip it) replaces the real-time row in silver, ingested in August;
+      10:00 UTC, whose newer version (51,000 MW, ingested at 11:20) is not in
+      silver yet; 10:15 UTC, absent from silver. Left out: 06:00 UTC and
+      2026-11-01 10:00 UTC, whose bronze rows are the ones silver already
+      holds (same ingestion time). Comparing quarter hours only, or requiring
+      a strictly later silver row, would fail.
+    model: eco2mix_national
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        rows:
+          - {timestamp_utc: "2026-08-01 10:00:00 UTC", source_dataset: eco2mix-national-tr, ingested_at: "2026-08-01 10:20:00 UTC"}
+          - {timestamp_utc: "2026-11-01 10:00:00 UTC", source_dataset: eco2mix-national-cons-def, ingested_at: "2026-11-09 15:00:00 UTC"}
+          - {timestamp_utc: "2026-11-20 06:00:00 UTC", source_dataset: eco2mix-national-tr, ingested_at: "2026-11-20 06:10:00 UTC"}
+          - {timestamp_utc: "2026-11-20 10:00:00 UTC", source_dataset: eco2mix-national-tr, ingested_at: "2026-11-20 10:20:00 UTC"}
+      - input: source('bronze', 'eco2mix_national_history')
+        rows:
+          - {date_heure: "2026-08-01 10:00:00 UTC", date: "2026-08-01", heure: "12:00", nature: "Données consolidées", consommation: 45000, _source_dataset: eco2mix-national-cons-def, _ingested_at: "2026-11-20 05:00:00 UTC"}
+          - {date_heure: "2026-11-01 10:00:00 UTC", date: "2026-11-01", heure: "11:00", nature: "Données consolidées", consommation: 44000, _source_dataset: eco2mix-national-cons-def, _ingested_at: "2026-11-09 15:00:00 UTC"}
+      - input: source('bronze', 'eco2mix_national_realtime')
+        rows:
+          - {date_heure: "2026-08-01 10:00:00 UTC", date: "2026-08-01", heure: "12:00", nature: "Données temps réel", consommation: 1, _source_dataset: eco2mix-national-tr, _source_updated_at: "2026-08-01 10:10:00 UTC", _kafka_offset: 1, _ingested_at: "2026-08-01 10:20:00 UTC"}
+          - {date_heure: "2026-11-20 06:00:00 UTC", date: "2026-11-20", heure: "07:00", nature: "Données temps réel", consommation: 40000, _source_dataset: eco2mix-national-tr, _source_updated_at: "2026-11-20 06:05:00 UTC", _kafka_offset: 10, _ingested_at: "2026-11-20 06:10:00 UTC"}
+          - {date_heure: "2026-11-20 10:00:00 UTC", date: "2026-11-20", heure: "11:00", nature: "Données temps réel", consommation: 50000, _source_dataset: eco2mix-national-tr, _source_updated_at: "2026-11-20 10:15:00 UTC", _kafka_offset: 20, _ingested_at: "2026-11-20 10:20:00 UTC"}
+          - {date_heure: "2026-11-20 10:00:00 UTC", date: "2026-11-20", heure: "11:00", nature: "Données temps réel", consommation: 51000, _source_dataset: eco2mix-national-tr, _source_updated_at: "2026-11-20 11:15:00 UTC", _kafka_offset: 30, _ingested_at: "2026-11-20 11:20:00 UTC"}
+          - {date_heure: "2026-11-20 10:15:00 UTC", date: "2026-11-20", heure: "11:15", nature: "Données temps réel", consommation: 52000, _source_dataset: eco2mix-national-tr, _source_updated_at: "2026-11-20 11:15:00 UTC", _kafka_offset: 31, _ingested_at: "2026-11-20 11:20:00 UTC"}
+    expect:
+      rows:
+        - {timestamp_utc: "2026-08-01 10:00:00 UTC", data_status: consolidated, step_hours: 0.5, consumption_mw: 45000}
+        - {timestamp_utc: "2026-11-20 10:00:00 UTC", data_status: real_time, step_hours: 0.25, consumption_mw: 51000}
+        - {timestamp_utc: "2026-11-20 10:15:00 UTC", data_status: real_time, step_hours: 0.25, consumption_mw: 52000}

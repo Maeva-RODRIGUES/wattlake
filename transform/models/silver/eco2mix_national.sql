@@ -1,10 +1,54 @@
 -- Silver eCO2mix national: one row per quarter hour, typed and deduplicated,
 -- from the history and the real-time stream (docs/adr/012-temps-reel-silver-gold.md).
 -- Grain, units and publication steps of every column: see _silver.yml.
+--
+-- Built incrementally (docs/adr/017-reconstruction-incrementale.md): a run
+-- recomputes only the quarter hours that received a bronze row since the
+-- previous run, and merges them on timestamp_utc. A recomputed quarter hour
+-- goes through the whole logic below (latest real-time version, history
+-- first), so the result is the one a full rebuild would give for it.
+-- "dbt build --full-refresh" rebuilds the whole table.
 
-with history as (
+{{ config(
+    materialized='incremental',
+    incremental_strategy='merge',
+    unique_key='timestamp_utc',
+    on_schema_change='fail'
+) }}
+
+with
+
+{% if is_incremental() %}
+-- The quarter hours to recompute: those with a bronze row that silver has not
+-- seen yet, i.e. no silver row for the same quarter hour ingested at the same
+-- time or later. An exact comparison, row by row: no watermark, so a load
+-- committed after newer rows (two history loads at once, a slow write) is not
+-- skipped, and nothing already merged is recomputed again.
+changed_quarter_hours as (
+
+    select history.date_heure
+    from {{ source('bronze', 'eco2mix_national_history') }} as history
+    left join {{ this }} as silver
+        on silver.timestamp_utc = history.date_heure
+        and silver.ingested_at >= history._ingested_at
+    where silver.timestamp_utc is null
+    union
+    select realtime.date_heure
+    from {{ source('bronze', 'eco2mix_national_realtime') }} as realtime
+    left join {{ this }} as silver
+        on silver.timestamp_utc = realtime.date_heure
+        and silver.ingested_at >= realtime._ingested_at
+    where silver.timestamp_utc is null
+
+),
+{% endif %}
+
+history as (
 
     select * from {{ source('bronze', 'eco2mix_national_history') }}
+    {% if is_incremental() -%}
+    where date_heure in (select date_heure from changed_quarter_hours)
+    {%- endif %}
 
 ),
 
@@ -33,6 +77,11 @@ realtime_versions as (
         ) as version_rank
     from {{ source('bronze', 'eco2mix_national_realtime') }}
     where format_datetime(date_heure at time zone 'Europe/Paris', 'HH:mm') = heure
+    {% if is_incremental() -%}
+        -- Every version of a changed quarter hour, so that the ranking still
+        -- sees the latest one.
+        and date_heure in (select date_heure from changed_quarter_hours)
+    {%- endif %}
 
 ),
 
