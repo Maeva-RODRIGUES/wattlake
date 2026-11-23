@@ -26,6 +26,17 @@ When a test fails, main is left as it was and the audit branch keeps the
 failed build, to be queried in Trino (catalog iceberg_audit) until the next
 run recreates it.
 
+Silver and daily gold are built incrementally
+(docs/adr/017-reconstruction-incrementale.md). Two rules, in
+wattlake_ingestion.transform_schedule:
+
+- the 11:00 UTC run compacts them on main after publishing
+  (compact_silver_and_gold). In the same DAG run, after publish, and with one
+  run at a time: no build can be in progress, so the compaction commit never
+  collides with a publication;
+- the Sunday 11:00 UTC run, or a run triggered with {"full_refresh": true},
+  passes --full-refresh to dbt build: a full rebuild, as a safety net.
+
 dbt runs in its own virtual environment of the Airflow image (/opt/dbt/venv),
 installed from transform/requirements.txt: its pinned dependencies differ
 from the Airflow constraints for 26 shared packages, so the two cannot share
@@ -37,9 +48,10 @@ from datetime import timedelta
 
 import pendulum
 from airflow.providers.standard.operators.bash import BashOperator
-from airflow.sdk import Asset, AssetOrTimeSchedule, CronTriggerTimetable, dag, task
+from airflow.sdk import Asset, AssetOrTimeSchedule, CronTriggerTimetable, dag, get_current_context, task
 
 from wattlake_ingestion.lakehouse import AUDIT_BRANCH, BRONZE_TABLE, BRONZE_TABLE_URI, MAIN_BRANCH
+from wattlake_ingestion.transform_schedule import dbt_full_refresh_flag, is_compaction_run
 
 BRONZE = Asset(name=BRONZE_TABLE, uri=BRONZE_TABLE_URI)
 DBT_PROJECT_DIR = "/opt/wattlake/transform"
@@ -56,6 +68,8 @@ DBT_PROJECT_DIR = "/opt/wattlake/transform"
     # Also what makes a single audit branch enough: one run uses it at a time.
     max_active_runs=1,
     default_args={"retries": 1, "retry_delay": timedelta(minutes=5)},
+    # Called from the dbt_build command, rendered by Airflow for each run.
+    user_defined_macros={"dbt_full_refresh_flag": dbt_full_refresh_flag},
     tags=["transform", "dbt"],
     doc_md=__doc__,
 )
@@ -83,6 +97,8 @@ def dbt_transformations() -> None:
             f" --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR}"
             " --target-path /tmp/dbt/target --log-path /tmp/dbt/logs"
             """ --vars '{"as_of": "{{ dag_run.run_after.isoformat() }}"}'"""
+            # "--full-refresh" on Sundays at 11:00 UTC or when asked, else nothing.
+            " {{ dbt_full_refresh_flag(dag_run.run_after, dag_run.conf) }}"
         ),
         # Same profiles.yml as on a laptop, pointed at the in-cluster Trino.
         env={"TRINO_HOST": "trino.wattlake.svc.cluster.local", "TRINO_PORT": "8080"},
@@ -118,8 +134,27 @@ def dbt_transformations() -> None:
         log.info("%s@%s merged into %s: %s", AUDIT_BRANCH, audited_hash, MAIN_BRANCH, merged_hash)
         return merged_hash
 
+    @task.short_circuit(ignore_downstream_trigger_rules=False)
+    def is_daily_compaction() -> bool:
+        """True for the 11:00 UTC run only: the others skip the compaction."""
+        return is_compaction_run(get_current_context()["dag_run"].run_after)
+
+    # On main, after the publication (--target dev), like the bronze compaction.
+    compact_silver_and_gold = BashOperator(
+        task_id="compact_silver_and_gold",
+        bash_command=(
+            "/opt/dbt/venv/bin/dbt run-operation optimize_silver_gold_tables --target dev"
+            f" --project-dir {DBT_PROJECT_DIR} --profiles-dir {DBT_PROJECT_DIR}"
+            " --target-path /tmp/dbt/target --log-path /tmp/dbt/logs"
+        ),
+        env={"TRINO_HOST": "trino.wattlake.svc.cluster.local", "TRINO_PORT": "8080"},
+        append_env=True,
+    )
+
     base_hash = create_audit_branch()
-    base_hash >> dbt_build >> publish(base_hash)
+    published = publish(base_hash)
+    base_hash >> dbt_build >> published
+    published >> is_daily_compaction() >> compact_silver_and_gold
 
 
 dbt_transformations()

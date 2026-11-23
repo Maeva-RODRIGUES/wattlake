@@ -82,6 +82,14 @@ Vérifié sur les données du cluster, sans écriture :
 
 Le test unitaire en mode incrémental couvre un jour révisé, un jour partiel devenu complet, un jour nouveau et un jour inchangé. Ne recalculer que les jours modifiés, ou que les jours absents, le fait échouer.
 
+## Mise à jour : compactage et reconstruction hebdomadaire
+
+**Silver et le gold quotidien sont compactés chaque jour, par le DAG `dbt_transformations` lui-même**, au run de 11:00 UTC, après la publication (macro `optimize_silver_gold_tables`, sur `main`). Pas par `iceberg_maintenance`, qui compacte bronze : son commit sur silver pourrait tomber entre la création de la branche `audit` et la fusion d'un run dbt, et Nessie refuserait la fusion, silver ayant changé des deux côtés (ADR 008). Ce cas arriverait presque chaque matin, quand les deux DAG rattrapent leurs runs au réveil du portable. Dans le même DAG, après `publish`, avec un seul run à la fois, aucune construction ne peut être en cours.
+
+**Le run du dimanche à 11:00 UTC reconstruit silver et gold en entier** (`--full-refresh`), comme un run déclenché avec la configuration `{"full_refresh": true}`. C'est le filet de sécurité pour ce que l'anti-jointure ne voit pas, comme un quart d'heure supprimé de bronze.
+
+Les deux règles sont des fonctions de l'heure logique du run, dans `wattlake_ingestion.transform_schedule`, testées sans Airflow. Avec `catchup=False`, un portable réveillé après midi saute le compactage du jour, ou la reconstruction de la semaine : le suivant les rattrape.
+
 ## Sources
 
 - dbt, modèles incrémentaux et stratégie `merge`. https://docs.getdbt.com/docs/build/incremental-models
