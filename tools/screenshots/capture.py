@@ -1,10 +1,11 @@
 """Capture the README screenshots of the stack's web interfaces.
 
-Steps: run the smoke test, open port-forwards to Nessie, Trino, Argo CD and
-Grafana, take the screenshots with a headless Chromium into docs/images/, close
-the port-forwards. Each screenshot is taken only once the expected content is
-on screen. The Argo CD and Grafana passwords are read from their Secrets and
-only typed into the login forms: they are never printed or written to disk.
+Steps: run the smoke test, open port-forwards to Nessie, Trino, Airflow,
+Argo CD and Grafana, take the screenshots with a headless Chromium into
+docs/images/, close the port-forwards. Each screenshot is taken only once the
+expected content is on screen. The Airflow, Argo CD and Grafana passwords are
+read from their Secrets and only typed into the login forms: they are never
+printed or written to disk.
 
 Usage: make screenshots
 """
@@ -20,6 +21,7 @@ import urllib.request
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from playwright.sync_api import Page, sync_playwright
 
@@ -33,19 +35,23 @@ TRINO_PORT = 18080
 NESSIE_PORT = 29120
 ARGOCD_PORT = 18082
 GRAFANA_PORT = 13000
+AIRFLOW_PORT = 18081
 TRINO_URL = f"http://127.0.0.1:{TRINO_PORT}"
 NESSIE_URL = f"http://127.0.0.1:{NESSIE_PORT}"
 ARGOCD_URL = f"http://127.0.0.1:{ARGOCD_PORT}"
 GRAFANA_URL = f"http://127.0.0.1:{GRAFANA_PORT}"
+AIRFLOW_URL = f"http://127.0.0.1:{AIRFLOW_PORT}"
 
 # Every Argo CD Application of the stack (infra/argocd/), all expected Synced and Healthy.
 ARGOCD_APPS = [
     "alloy",
     "airflow",
+    "coredns",
     "kafka",
     "loki",
     "monitoring",
     "nessie",
+    "nessie-gc",
     "postgres",
     "seaweedfs",
     "streaming",
@@ -54,6 +60,12 @@ ARGOCD_APPS = [
     "wattlake",
 ]
 REALTIME_TABLE = "iceberg.bronze.eco2mix_national_realtime"
+MONTHLY_GOLD_TABLE = "iceberg.gold.renewable_share_monthly"
+DBT_DAG = "dbt_transformations"
+# Its tasks, in order: the Write-Audit-Publish chain, then the daily compaction.
+DBT_DAG_TASKS = ["create_audit_branch", "dbt_build", "publish", "is_daily_compaction", "compact_silver_and_gold"]
+# Runs shown in the Airflow grid: a day of hourly runs, the compaction once.
+AIRFLOW_GRID_RUNS = "25"
 
 TRINO_USER = "wattlake"
 SMOKE_TABLE = "smoke_test.readings"
@@ -273,12 +285,23 @@ def capture_argocd_apps(page: Page) -> Path:
 
 def capture_argocd_streaming(page: Page) -> Path:
     """Resource tree of the streaming Application: producer and writer Deployments and their pods."""
-    page.goto(f"{ARGOCD_URL}/applications/argocd/streaming?view=tree")
-    for name in ("producer", "writer"):
-        page.get_by_text(name, exact=True).first.wait_for(timeout=TIMEOUT_MS)
-    page.wait_for_load_state("networkidle")
-    path = IMAGES_DIR / "argocd-streaming.png"
-    page.screenshot(path=path, full_page=True)
+    # Taller than the default: the tree scrolls inside the page, and every
+    # deployment adds a ReplicaSet (up to 10 kept per Deployment).
+    page.set_viewport_size({"width": VIEWPORT["width"], "height": 1050})
+    try:
+        page.goto(f"{ARGOCD_URL}/applications/argocd/streaming?view=tree")
+        for name in ("producer", "writer"):
+            page.get_by_text(name, exact=True).first.wait_for(timeout=TIMEOUT_MS)
+        page.wait_for_load_state("networkidle")
+        # The status panel shows the author of the synced commit, e-mail address
+        # included: no address may appear in the project's files.
+        page.locator(".application-status-panel__item__row").filter(has_text="Author:").evaluate_all(
+            "rows => rows.forEach(row => row.style.display = 'none')"
+        )
+        path = IMAGES_DIR / "argocd-streaming.png"
+        page.screenshot(path=path, full_page=True)
+    finally:
+        page.set_viewport_size(VIEWPORT)
     return path
 
 
@@ -307,6 +330,31 @@ def capture_grafana(page: Page) -> Path:
     return path
 
 
+def format_cell(value) -> str:
+    """A result value as Trino's CLI shows it: NULL as a dash, booleans in lower case."""
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return str(value).lower()
+    return html.escape(str(value))
+
+
+def render_query_result(page: Page, sql: str, columns: list[str], rows: list[list]) -> None:
+    """Lay out a query and its result rows in a plain HTML table, in the #result element."""
+    head = "".join(f"<th>{html.escape(c)}</th>" for c in columns)
+    body = "".join("<tr>" + "".join(f"<td>{format_cell(v)}</td>" for v in row) + "</tr>" for row in rows)
+    page.set_content(
+        "<html><body style='font-family: sans-serif; margin: 0'>"
+        "<div id='result' style='display: inline-block; padding: 16px'>"
+        f"<pre style='background:#f4f4f4; padding:12px; font-size:14px'>{html.escape(sql)}</pre>"
+        "<table style='border-collapse: collapse; font-size: 14px'>"
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+        "<style>th, td {border: 1px solid #ccc; padding: 6px 10px; text-align: right} th {background:#eaeaea}</style>"
+        f"<p style='color:#555'>{len(rows)} lignes, renvoyées par Trino ({TRINO_USER}).</p>"
+        "</div></body></html>"
+    )
+
+
 def capture_realtime_versions(page: Page) -> Path:
     """The versions of one quarter-hour in the real-time bronze table, as Trino returns them.
 
@@ -324,20 +372,114 @@ def capture_realtime_versions(page: Page) -> Path:
     if len(rows) < 2:
         raise RuntimeError(f"expected several versions of the quarter-hour, got {len(rows)} row(s)")
 
-    head = "".join(f"<th>{html.escape(c)}</th>" for c in columns)
-    body = "".join("<tr>" + "".join(f"<td>{html.escape(str(v))}</td>" for v in row) + "</tr>" for row in rows)
-    page.set_content(
-        "<html><body style='font-family: sans-serif; margin: 0'>"
-        "<div id='result' style='display: inline-block; padding: 16px'>"
-        f"<pre style='background:#f4f4f4; padding:12px; font-size:14px'>{html.escape(sql)}</pre>"
-        "<table style='border-collapse: collapse; font-size: 14px'>"
-        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
-        "<style>th, td {border: 1px solid #ccc; padding: 6px 10px; text-align: right} th {background:#eaeaea}</style>"
-        f"<p style='color:#555'>{len(rows)} lignes, renvoyées par Trino ({TRINO_USER}).</p>"
-        "</div></body></html>"
-    )
+    render_query_result(page, sql, columns, rows)
     path = IMAGES_DIR / "trino-realtime-versions.png"
     page.locator("#result").screenshot(path=path)
+    return path
+
+
+def capture_renewable_share(page: Page) -> Path:
+    """The yearly share of renewables in the monthly gold table, as Trino returns it.
+
+    The strict share (statistical conventions of the SDES) is NULL in 2012:
+    the technology detail it needs is published from 2013 only.
+    """
+    sql = (
+        "SELECT year(month) AS annee,\n"
+        "       round(100 * sum(renewable_mwh) / sum(production_mwh), 1) AS part_large_pct,\n"
+        "       round(100 * sum(renewable_strict_mwh) / sum(production_with_detail_mwh), 1) AS part_stricte_pct,\n"
+        "       bool_or(is_partial) AS annee_en_cours\n"
+        f"FROM {MONTHLY_GOLD_TABLE}\n"
+        "GROUP BY 1 ORDER BY 1"
+    )
+    columns, rows = trino_query(sql)
+    if len(rows) < 10:
+        raise RuntimeError(f"expected one row per year since 2012, got {len(rows)}")
+    render_query_result(page, sql, columns, rows)
+    path = IMAGES_DIR / "gold-renewable-share.png"
+    page.locator("#result").screenshot(path=path)
+    return path
+
+
+def login_airflow(page: Page) -> None:
+    page.goto(f"{AIRFLOW_URL}/auth/login/")
+    page.locator("input[name=username]").fill("admin")
+    page.locator("input[name=password]").fill(read_secret(NAMESPACE, "airflow-credentials", "admin-password"))
+    page.locator("input[type=submit]").click()
+    page.wait_for_url(lambda url: "/auth/login" not in url, timeout=TIMEOUT_MS)
+
+
+def latest_compaction_run(page: Page) -> str:
+    """Id of the latest successful dbt run that also compacted silver and gold, from Airflow's REST API.
+
+    The browser session, once logged in, authenticates the API calls.
+    """
+    api = f"{AIRFLOW_URL}/api/v2/dags/{DBT_DAG}/dagRuns"
+    runs = page.request.get(f"{api}?state=success&order_by=-run_after&limit=50")
+    if not runs.ok:
+        raise RuntimeError(f"Airflow API: HTTP {runs.status} on the DAG runs")
+    for run in runs.json()["dag_runs"]:
+        tasks = page.request.get(f"{api}/{run['dag_run_id']}/taskInstances").json()["task_instances"]
+        if {t["task_id"]: t["state"] for t in tasks}.get("compact_silver_and_gold") == "success":
+            return run["dag_run_id"]
+    raise RuntimeError("no successful dbt run with a compaction among the last 50")
+
+
+def capture_airflow_graph(page: Page) -> Path:
+    """Graph of the latest dbt run that compacted: Write-Audit-Publish, then the compaction, all succeeded."""
+    run_id = latest_compaction_run(page)
+    # A short viewport: the graph, centred in its canvas, sits right under
+    # the header (DAG and run id), without empty canvas around it.
+    page.set_viewport_size({"width": VIEWPORT["width"], "height": 330})
+    try:
+        page.goto(f"{AIRFLOW_URL}/dags/{DBT_DAG}/runs/{quote(run_id, safe='')}")
+        page.get_by_role("button", name="Afficher le graphe (Appuyez sur g)").click()
+        page.get_by_role("button", name="Replier le panneau des détails").click()
+        # Each task node shows its name and its state.
+        for task in DBT_DAG_TASKS:
+            page.locator(".react-flow__node", has_text=task).filter(has_text="success").wait_for(timeout=TIMEOUT_MS)
+        # Without the minimap and the zoom buttons, which would cover the last task.
+        page.add_style_tag(content=".react-flow__minimap, .react-flow__controls, .react-flow__panel {display: none}")
+        # No tooltip: the pointer rests on the empty canvas.
+        page.mouse.move(VIEWPORT["width"] / 2, 320)
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(1000)
+        path = IMAGES_DIR / "airflow-dbt-graph.png"
+        page.screenshot(path=path)
+    finally:
+        page.set_viewport_size(VIEWPORT)
+    return path
+
+
+def capture_airflow_grid(page: Page) -> Path:
+    """Grid of the last runs of the dbt DAG: one column per hourly run, one row per task."""
+    # Narrow: the grid is drawn against the right edge, this keeps the task
+    # names close to their runs.
+    page.set_viewport_size({"width": 900, "height": VIEWPORT["height"]})
+    try:
+        page.goto(f"{AIRFLOW_URL}/dags/{DBT_DAG}")
+        # The UI remembers the last view: the graph, after capture_airflow_graph.
+        page.get_by_role("button", name="Afficher la grille (Appuyez sur g)").click()
+        page.get_by_role("button", name="Replier le panneau des détails").click()
+        page.get_by_role("button", name="Options").click()
+        # The "number of runs" select, 10 by default.
+        page.get_by_test_id("display-dag-run-options").get_by_role("combobox").click()
+        page.get_by_role("option", name=AIRFLOW_GRID_RUNS, exact=True).click()
+        page.keyboard.press("Escape")
+        page.evaluate("document.activeElement && document.activeElement.blur()")
+        # No tooltip: the pointer rests on the empty page below the grid.
+        page.mouse.move(450, VIEWPORT["height"] - 10)
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(2000)
+        last_row = page_box(page, page.get_by_text(DBT_DAG_TASKS[-1], exact=True).first)
+        margin = 16
+        path = IMAGES_DIR / "airflow-dbt-grid.png"
+        page.screenshot(
+            path=path,
+            clip={"x": 64, "y": 0, "width": 900 - 64, "height": last_row["y"] + last_row["height"] + margin},
+        )
+    finally:
+        page.set_viewport_size(VIEWPORT)
     return path
 
 
@@ -350,16 +492,24 @@ def main() -> int:
             (NAMESPACE, "trino", TRINO_PORT, 8080),
             ("argocd", "argocd-server", ARGOCD_PORT, 80),
             ("monitoring", "monitoring-grafana", GRAFANA_PORT, 80),
+            (NAMESPACE, "airflow-api-server", AIRFLOW_PORT, 8080),
         ),
         sync_playwright() as playwright,
     ):
         browser = playwright.chromium.launch(headless=True)
         try:
-            page = browser.new_page(viewport=VIEWPORT)
+            # Airflow shows dates in the browser's time zone, and its labels in
+            # the browser's language: UTC like the run ids, and French like the
+            # README. The Airflow captures find their buttons by these labels.
+            # "fr", not "fr-FR": Airflow falls back to English for the latter.
+            page = browser.new_page(viewport=VIEWPORT, timezone_id="UTC", locale="fr")
             captures = [
                 lambda: capture_nessie(page, started_at),
                 lambda: capture_trino(page),
                 lambda: capture_realtime_versions(page),
+                lambda: capture_renewable_share(page),
+                lambda: (login_airflow(page), capture_airflow_graph(page))[1],
+                lambda: capture_airflow_grid(page),
                 lambda: (login_argocd(page), capture_argocd_apps(page))[1],
                 lambda: capture_argocd_streaming(page),
                 lambda: capture_grafana(page),

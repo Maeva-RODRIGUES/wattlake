@@ -23,17 +23,21 @@ J'ai choisi les données de production et de consommation électrique parce qu'e
 
 ## Aperçu
 
-![Liste des Applications Argo CD, toutes synchronisées et saines](docs/images/argocd-applications.png)
+![Part des renouvelables par année, lue dans la couche gold](docs/images/gold-renewable-share.png)
 
-*Les 12 Applications Argo CD de la stack, toutes `Synced` et `Healthy` : le cluster est exactement ce que décrit la branche `main` du dépôt. Les charts Helm sont épinglés à une version, les manifestes du dépôt suivent `main`.*
+*Le résultat : la part des énergies renouvelables dans la production d'électricité en France, par année, lue dans la table gold `renewable_share_monthly`. La part large compte l'éolien, le solaire, l'hydraulique et les bioénergies ; la part stricte suit les conventions statistiques du SDES (sans le turbinage des stations de pompage, avec la moitié des déchets). Elle est vide (NULL, pas 0) en 2012, faute du détail par filière que la source ne publie qu'à partir de 2013. L'année en cours est signalée comme partielle.*
 
-![Arbre des ressources de l'Application streaming dans Argo CD](docs/images/argocd-streaming.png)
+![Graphe d'un run du DAG dbt dans Airflow](docs/images/airflow-dbt-graph.png)
 
-*L'Application `streaming` : le producteur (API vers Kafka) et le writer (Kafka vers Iceberg), chacun dans un `Deployment` à un réplica. Les anciens ReplicaSets sont les versions précédentes de l'image, gardées pour un retour arrière.*
+*Un run du DAG `dbt_transformations`, celui de 11:00 UTC : le Write-Audit-Publish (création de la branche `audit` depuis `main`, `dbt build` et ses tests sur cette branche, fusion dans `main`), puis le compactage quotidien de silver et gold, après la publication (ADR 008 et 017).*
+
+![Grille des 25 derniers runs du DAG dbt dans Airflow](docs/images/airflow-dbt-grid.png)
+
+*Les 25 derniers runs horaires, un par colonne. Deux histoires s'y lisent. La colonne rouge isolée est un run rattrapé au réveil du portable : la veille était incomplète, le test l'a vu, et `publish` n'a pas tourné (orange). Le bloc rouge est le premier déploiement de l'incrémental, refusé par Nessie (ADR 017) : `main` a gardé les dernières tables testées jusqu'à la correction. Les traits verticaux marquent les nouvelles versions du DAG. Le compactage ne tourne qu'au run de 11:00 UTC ; ailleurs, il est sauté (rose).*
 
 ![Tableau de bord WattLake dans Grafana](docs/images/grafana-wattlake.png)
 
-*Le tableau de bord « WattLake » dans Grafana : retard du writer (ici 14 messages, le dernier rafraîchissement de RTE, qui attendent le prochain lot du writer, au plus 5 minutes ; 0 quand la table Iceberg est à jour), messages publiés, exécutions des DAG Airflow, requêtes Trino, opérations du catalogue Nessie, et les logs du producteur et du writer collectés par Loki.*
+*Le tableau de bord « WattLake » dans Grafana, sur 24 heures : retard du writer (0 : la table Iceberg est à jour ; il monte jusqu'à une quinzaine de messages entre deux lots), messages publiés, exécutions des DAG Airflow, requêtes Trino, opérations du catalogue Nessie, et les logs du producteur et du writer collectés par Loki. Le trou de la nuit est la mise en veille du portable.*
 
 ![Versions d'un quart d'heure dans la table bronze temps réel](docs/images/trino-realtime-versions.png)
 
@@ -42,6 +46,14 @@ J'ai choisi les données de production et de consommation électrique parce qu'e
 ![Historique des commits de la branche main dans l'interface de Nessie](docs/images/nessie-commits.png)
 
 *Historique de la branche `main` dans Nessie après un smoke test. Chaque opération lancée depuis Trino (suppression, création du namespace, création de la table, insertion) devient un commit, comme dans Git. C'est ce versionnement qui permet de revenir à un état antérieur, et au DAG dbt de travailler sur une branche isolée avant de publier (Write-Audit-Publish).*
+
+![Liste des Applications Argo CD, toutes synchronisées et saines](docs/images/argocd-applications.png)
+
+*Les 14 Applications Argo CD de la stack, toutes `Synced` et `Healthy` : le cluster est exactement ce que décrit la branche `main` du dépôt. Les charts Helm sont épinglés à une version, les manifestes du dépôt suivent `main`.*
+
+![Arbre des ressources de l'Application streaming dans Argo CD](docs/images/argocd-streaming.png)
+
+*L'Application `streaming` : le producteur (API vers Kafka) et le writer (Kafka vers Iceberg), chacun dans un `Deployment` à un réplica. Les anciens ReplicaSets sont les versions précédentes de l'image, gardées pour un retour arrière.*
 
 ![Détail de la requête de contrôle du smoke test dans l'interface de Trino](docs/images/trino-query.png)
 
@@ -264,10 +276,10 @@ GROUP BY 1 ORDER BY 1;
 ### Régénérer les captures
 
 ```bash
-make screenshots     # smoke test, puis captures de Nessie, Trino, Argo CD et Grafana dans docs/images/
+make screenshots     # smoke test, puis captures de Nessie, Trino, Airflow, Argo CD et Grafana dans docs/images/
 ```
 
-Les mots de passe d'Argo CD et de Grafana sont lus dans leurs Secrets par le script ([tools/screenshots/capture.py](tools/screenshots/capture.py)) et seulement saisis dans les formulaires de connexion.
+Les mots de passe d'Airflow, d'Argo CD et de Grafana sont lus dans leurs Secrets par le script ([tools/screenshots/capture.py](tools/screenshots/capture.py)) et seulement saisis dans les formulaires de connexion.
 
 Au premier lancement, la cible crée un environnement virtuel `.venv` dans le projet et y installe Playwright et un Chromium headless (environ 450 Mo). Rien n'est installé en dehors du projet : supprimer `.venv` suffit à tout retirer.
 
