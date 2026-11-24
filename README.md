@@ -12,6 +12,15 @@ WattLake est un projet d'apprentissage : je l'ai lancé pour pratiquer, de bout 
 
 J'ai choisi les données de production et de consommation électrique parce qu'elles réunissent deux usages classiques : un historique à charger en batch, et des mises à jour fréquentes qui se prêtent à un flux temps réel. Elles permettent aussi de répondre à des questions concrètes, comme l'évolution de la part des énergies renouvelables dans le mix.
 
+## En bref
+
+- **De bout en bout** : l'historique publié par RTE depuis 2012 (514 272 quarts d'heure) est chargé en batch par Airflow, et le temps réel arrive toutes les 5 minutes par Kafka, dans des tables Iceberg. dbt construit les couches silver et gold sur Trino, chaque heure.
+- **Rien n'est publié sans être testé** : dbt écrit sur une branche Nessie, lance 46 tests de données et 8 tests unitaires, et ne fusionne dans `main` que s'ils passent (Write-Audit-Publish, ADR 008). Parmi eux, un bilan électrique : chaque mois, la consommation doit égaler la production, les échanges, le pompage et les batteries, à 1 % près.
+- **Exactement une fois** : le writer Kafka vers Iceberg enregistre ses offsets dans le même commit que les données (ADR 010).
+- **Incrémental, et mesuré avant d'être décidé** : 94 % du lac étaient d'anciennes copies de silver et gold. Chaque run ne fusionne plus que les quarts d'heure et les jours modifiés, par exemple 17 lignes au lieu de 522 000 (ADR 017).
+- **Exploité comme en production** : déploiement GitOps par Argo CD, CI en 7 jobs, images épinglées par SHA, métriques et logs dans Grafana, 5 règles d'alerte envoyées sur Discord et couvertes par 12 tests.
+- **Chaque décision est argumentée** : 17 ADR, avec les options écartées et les mesures qui ont tranché.
+
 ## Aperçu
 
 ![Liste des Applications Argo CD, toutes synchronisées et saines](docs/images/argocd-applications.png)
@@ -127,6 +136,13 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 - [x] Rechargement hebdomadaire de l'historique récent, pour les données consolidées et définitives publiées en retard (ADR 015)
 - [x] Alertes sur les pipelines, envoyées sur Discord : retard du writer, flux arrêté, DAG en échec, silver et gold non publiés (ADR 016)
 
+**Étape 5 : fiabilité des données et coûts**
+- [x] Import de tous les DAG dans l'image Airflow, en CI, avant sa publication
+- [x] Tests unitaires dbt des changements d'heure : heure répétée d'octobre, journées de 23 et 25 heures
+- [x] Bilan électrique mensuel comme test de données, à la place d'un test qui ne vérifiait que l'agrégation
+- [x] Runs reproductibles : le jour en cours est calculé à l'heure logique du run Airflow, pas à l'horloge
+- [x] Silver et gold incrémentaux, compactés chaque jour et reconstruits en entier chaque dimanche (ADR 017)
+
 ## Démarrer
 
 ### Prérequis
@@ -212,7 +228,7 @@ kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler
   airflow dags unpause eco2mix_history_refresh
 ```
 
-Le DAG `eco2mix_history_to_bronze` rattrape alors l'historique mois par mois depuis janvier 2012, en quelques minutes. Chaque mois chargé met à jour l'Asset de la table bronze, ce qui déclenche `dbt_transformations` : silver et gold sont reconstruites et les tests lancés. Ensuite, chaque dimanche, `eco2mix_history_refresh` recharge les 24 derniers mois, pour prendre les données consolidées et définitives que RTE publie avec plusieurs mois de retard. Les détails sont dans [ingestion/README.md](ingestion/README.md) et [transform/README.md](transform/README.md).
+Le DAG `eco2mix_history_to_bronze` rattrape alors l'historique mois par mois depuis janvier 2012, en quelques minutes. Chaque mois chargé met à jour l'Asset de la table bronze, ce qui déclenche `dbt_transformations` : silver et gold sont mises à jour et les tests lancés. Ensuite, chaque dimanche, `eco2mix_history_refresh` recharge les 24 derniers mois, pour prendre les données consolidées et définitives que RTE publie avec plusieurs mois de retard. Les détails sont dans [ingestion/README.md](ingestion/README.md) et [transform/README.md](transform/README.md).
 
 ### Interroger la stack
 
@@ -326,6 +342,14 @@ Chaque décision importante est documentée dans un ADR (Architecture Decision R
 
 ## Limites et suites possibles
 
+Des choix assumés pour un cluster local, chacun avec ce que je ferais ensuite :
+
+- **Un seul broker Kafka, sans réplication.** Une panne de disque perd le topic, mais pas les données : ce qui est déjà dans Iceberg y reste, et le producteur, trouvant le topic vide, republie tout le jeu temps réel en cours. En production : trois brokers et une réplication de 3 (ADR 009).
+- **Pas de file de rejet.** Un message au format inattendu arrête le writer, volontairement : mieux vaut s'arrêter que perdre des données en silence. Avec plusieurs producteurs : un topic de rejet, une alerte et un Schema Registry (ADR 010).
+- **Une seule partition Kafka**, assignée au writer sans groupe de consommateurs. Quelques dizaines de messages par heure, et l'ordre par quart d'heure compte ; les offsets sont déjà enregistrés par partition, prêts pour en ajouter.
+- **L'incrémental ne voit pas les suppressions.** Un quart d'heure retiré de bronze resterait dans silver jusqu'à la reconstruction complète du dimanche. La source n'en retire pas aujourd'hui (ADR 017).
+- **Pas de référence externe pour les totaux.** Le bilan électrique vérifie la cohérence des données, pas leur exactitude : une erreur identique partout le laisse passer. Suite possible : comparer les totaux annuels aux bilans électriques publiés par RTE.
+- **Des alertes sans astreinte.** Elles arrivent sur un salon Discord, et la fraîcheur est déduite des runs Airflow plutôt que lue dans les tables. Sur un portable mis en veille la nuit, le premier run du matin refuse de publier une veille incomplète, et l'alerte d'échec le signale : c'est le comportement voulu (ADR 016).
 - **Le cluster local dépend du réseau de la machine.** Après un changement de réseau, les nœuds k3d gardent les anciens serveurs DNS. CoreDNS passe alors par des DNS publics pour les noms dont la stack a besoin (ADR 014), mais le téléchargement des images reste bloqué jusqu'à `make cluster-restart` : `make cluster-dns-check` le détecte (voir [infra/README.md](infra/README.md)).
 
 ## Ce que je ferais en production
