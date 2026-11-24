@@ -90,6 +90,14 @@ Le test unitaire en mode incrémental couvre un jour révisé, un jour partiel d
 
 Les deux règles sont des fonctions de l'heure logique du run, dans `wattlake_ingestion.transform_schedule`, testées sans Airflow. Avec `catchup=False`, un portable réveillé après midi saute le compactage du jour, ou la reconstruction de la semaine : le suivant les rattrape.
 
+## Mise à jour : incident au premier déploiement
+
+Les deux premiers runs sur la nouvelle image (23 novembre 2026, 21:00 et 22:00 UTC) ont échoué sur silver : `createView is not supported for Iceberg Nessie catalogs`. Un run incrémental de dbt-trino stocke d'abord son lot dans une relation temporaire, puis le fusionne, et cette relation est une **vue** par défaut. Or Trino ne crée pas de vue dans un catalogue Nessie par l'API native (ADR 002). Les vérifications faites avant le déploiement exécutaient le lot en lecture seule, et ne pouvaient pas voir cette étape d'écriture.
+
+Le Write-Audit-Publish a joué son rôle : l'échec est resté sur la branche `audit`, `main` a gardé silver et gold du run de 20:00, et l'alerte `WattlakeDagRunFailed` est partie sur Discord.
+
+**Correction** : `views_enabled: false` pour tous les modèles (`dbt_project.yml`). Le lot passe par une table temporaire, créée puis supprimée sur la branche `audit` ; ses fichiers sont nettoyés par Nessie GC.
+
 ## Sources
 
 - dbt, modèles incrémentaux et stratégie `merge`. https://docs.getdbt.com/docs/build/incremental-models

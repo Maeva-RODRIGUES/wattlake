@@ -12,6 +12,12 @@ clean-targets: ["target", "dbt_packages"]
 
 models:
   wattlake:
+    # An incremental run first stores its batch in a temporary relation, then
+    # merges it. dbt-trino uses a view by default, but Trino cannot create
+    # views in a Nessie catalog through the native API ("createView is not
+    # supported for Iceberg Nessie catalogs", ADR 002): a temporary table
+    # instead, created and dropped on the audit branch (ADR 017).
+    +views_enabled: false
     silver:
       # Default for silver models: rebuilt in full on each run. "replace" makes
       # Trino use CREATE OR REPLACE TABLE: readers see the old or the new
