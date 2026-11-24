@@ -68,9 +68,17 @@ PROMETHEUS_IMAGE    := quay.io/prometheus/prometheus:v3.15.1
 PYYAML_VERSION      := 6.0.2
 PYTHON_SOURCES      := ingestion streaming infra/secrets tests/catalog tests/dags tools
 
+# DAGs unpaused by "make dags-unpause": same list as EXPECTED_DAGS in tests/dags/check_dags.py.
+# dbt_transformations comes first: Airflow drops the Asset events emitted while
+# a DAG is paused, so the first months loaded into bronze would trigger no dbt run.
+AIRFLOW_DAGS        := dbt_transformations eco2mix_history_to_bronze iceberg_maintenance eco2mix_history_refresh
+# 90 attempts 10 s apart: up to 15 minutes for Airflow to start on a new cluster.
+DAGS_UNPAUSE_ATTEMPTS := 90
+
 .PHONY: up down check-kubeconfig check-helm-env cluster-up cluster-down cluster-stop cluster-start \
 	cluster-restart cluster-dns-check \
-	secrets argocd-up argocd-apps airflow-image dag-check alert-rules-test smoke-test rest-catalog-test screenshots ingestion-test \
+	secrets argocd-up argocd-apps airflow-image dag-check alert-rules-test smoke-test rest-catalog-test dags-unpause \
+	screenshots ingestion-test \
 	transform-lock dbt lint dbt-parse ingestion-lock ingestion-lock-check \
 	streaming-lock streaming-test streaming-image streaming-image-import
 
@@ -196,6 +204,24 @@ smoke-test: check-kubeconfig
 ## from a throwaway pod, then Trino reads it through the native API (see ADR 004).
 rest-catalog-test: check-kubeconfig
 	bash tests/catalog/run.sh
+
+## Unpause the Airflow DAGs, which start paused on a new cluster. Each DAG is retried
+## until the scheduler runs and the DAG processor has stored it (first deployment).
+dags-unpause: check-kubeconfig
+	@for dag in $(AIRFLOW_DAGS); do \
+		attempt=0; \
+		until kubectl --context $(KUBE_CONTEXT) --namespace $(NAMESPACE) exec airflow-scheduler-0 \
+			--container scheduler -- airflow dags unpause $$dag >/dev/null 2>&1; do \
+			attempt=$$((attempt + 1)); \
+			if [ $$attempt -ge $(DAGS_UNPAUSE_ATTEMPTS) ]; then \
+				echo "$$dag is still not available in Airflow after 15 minutes: check the airflow pods" >&2; \
+				exit 1; \
+			fi; \
+			echo "==> Waiting for $$dag in Airflow ($$attempt/$(DAGS_UNPAUSE_ATTEMPTS))"; \
+			sleep 10; \
+		done; \
+		echo "==> $$dag unpaused"; \
+	done
 
 ## Project virtual environment with Playwright and its headless Chromium (never installed globally).
 $(VENV)/bin/playwright: tools/screenshots/requirements.txt

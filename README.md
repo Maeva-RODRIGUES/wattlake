@@ -157,6 +157,26 @@ Toute la stack tourne sur un cluster Kubernetes local (k3d). Argo CD la déploie
 
 ## Démarrer
 
+### Démarrage rapide
+
+Avec Docker, k3d, kubectl, Helm et uv installés, et 16 Go de mémoire libre (détails dans les [prérequis](#prérequis)) :
+
+```bash
+cp .envrc.example .envrc && direnv allow  # kubeconfig et configuration Helm propres au projet
+make up            # cluster k3d, Secrets, Argo CD, puis toute la stack (une dizaine de minutes)
+make dags-unpause  # attend Airflow, puis active les DAG : l'historique depuis 2012 se charge
+make smoke-test    # vérifie Trino, SeaweedFS et Nessie de bout en bout
+```
+
+Sous Linux, relever d'abord les limites d'inotify (voir les [prérequis](#prérequis)). Pour voir la chaîne tourner, ouvrir Airflow, puis Grafana, chacun dans son terminal :
+
+```bash
+kubectl --context k3d-wattlake -n wattlake port-forward svc/airflow-api-server 8081:8080  # http://127.0.0.1:8081
+kubectl --context k3d-wattlake -n monitoring port-forward svc/monitoring-grafana 3000:80  # http://127.0.0.1:3000
+```
+
+L'utilisateur est `admin` dans les deux cas. Les mots de passe sont tirés au hasard à l'installation : la section [Interroger la stack](#interroger-la-stack) montre comment les lire. Au bout de quelques minutes, le DAG `dbt_transformations` a tourné, et la couche gold répond à la [requête de la part des renouvelables](#interroger-la-stack). `make down` supprime tout.
+
 ### Prérequis
 
 | Outil | Version testée | Rôle |
@@ -200,47 +220,23 @@ make dbt ARGS="debug"   # projet dbt : configuration et connexion à Trino (voir
 
 `make up` crée le cluster et les Secrets de la stack, installe Argo CD, puis lui confie l'Application racine. Les identifiants (clés S3, mots de passe, clés d'Airflow) sont tirés au hasard sur le poste par `make secrets` : ils ne sont jamais écrits dans le dépôt (voir l'[ADR 006](docs/adr/006-gestion-des-secrets.md)). Argo CD déploie ensuite toute la stack depuis la branche `main` du dépôt : SeaweedFS, PostgreSQL, Nessie, Trino, Airflow, l'opérateur Strimzi et Kafka, le producteur et le writer temps réel, puis la supervision (Prometheus, Grafana, Loki, Alloy). Il la maintient synchronisée : un changement fait à la main dans le cluster est annulé (voir [infra/README.md](infra/README.md)). Le premier déploiement prend une dizaine de minutes. `make up` peut être relancé : il ne recrée pas le cluster existant.
 
-### Déployer une modification
-
-Le cluster suit la branche `main` : modifier un fichier de valeurs dans `infra/`, puis le pousser sur `main`, suffit à le déployer. Pour une nouvelle version d'une image construite par la CI, attendre qu'elle ait été publiée pour le commit sur `main`, puis reporter son SHA et pousser ce changement :
-
-- image Airflow (code d'ingestion, DAG, projet dbt) : `images.airflow.tag` de [infra/airflow/values.yaml](infra/airflow/values.yaml) ;
-- image temps réel (producteur et writer) : `newTag` de [infra/streaming/kustomization.yaml](infra/streaming/kustomization.yaml).
-
-### Interface d'Argo CD
-
-```bash
-kubectl --context k3d-wattlake -n argocd port-forward svc/argocd-server 8082:80   # http://127.0.0.1:8082
-kubectl --context k3d-wattlake -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath='{.data.password}' | base64 --decode                                 # mot de passe de « admin »
-```
-
-Le mot de passe initial est généré par Argo CD à l'installation : il n'est pas dans le dépôt.
-
-`make rest-catalog-test` vérifie le chemin d'écriture de l'ingestion (voir l'[ADR 004](docs/adr/004-catalogue-rest-ingestion.md)) : depuis un pod éphémère, PyIceberg crée une table par le catalogue REST de Nessie, y ajoute des lignes puis en remplace une partie. Trino relit ensuite la table par l'API native, et Nessie doit montrer un commit par écriture.
-
 Le smoke test crée une table Iceberg depuis Trino, la relit, vérifie que ses fichiers sont dans SeaweedFS et que son commit apparaît dans Nessie. Il se termine par :
 
 ```
 ==> Smoke test passed
 ```
 
+`make rest-catalog-test` vérifie le chemin d'écriture de l'ingestion (voir l'[ADR 004](docs/adr/004-catalogue-rest-ingestion.md)) : depuis un pod éphémère, PyIceberg crée une table par le catalogue REST de Nessie, y ajoute des lignes puis en remplace une partie. Trino relit ensuite la table par l'API native, et Nessie doit montrer un commit par écriture.
+
 ### Charger les données et lancer les transformations
 
-Sur un cluster neuf, les quatre DAG d'Airflow sont en pause, comme tout nouveau DAG. Les activer lance la chaîne complète, puis le rechargement hebdomadaire de l'historique récent (ADR 015) et la maintenance quotidienne des tables (compactage, ADR 013) :
+Sur un cluster neuf, les quatre DAG d'Airflow sont en pause, comme tout nouveau DAG. `make dags-unpause` les active : il réessaie toutes les 10 secondes, jusqu'à 15 minutes, tant qu'Airflow n'a pas démarré ou n'a pas encore lu les DAG. Il peut être relancé sans risque.
 
 ```bash
-kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
-  airflow dags unpause dbt_transformations
-kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
-  airflow dags unpause eco2mix_history_to_bronze
-kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
-  airflow dags unpause iceberg_maintenance
-kubectl --context k3d-wattlake -n wattlake exec airflow-scheduler-0 -c scheduler -- \
-  airflow dags unpause eco2mix_history_refresh
+make dags-unpause
 ```
 
-Le DAG `eco2mix_history_to_bronze` rattrape alors l'historique mois par mois depuis janvier 2012, en quelques minutes. Chaque mois chargé met à jour l'Asset de la table bronze, ce qui déclenche `dbt_transformations` : silver et gold sont mises à jour et les tests lancés. Ensuite, chaque dimanche, `eco2mix_history_refresh` recharge les 24 derniers mois, pour prendre les données consolidées et définitives que RTE publie avec plusieurs mois de retard. Les détails sont dans [ingestion/README.md](ingestion/README.md) et [transform/README.md](transform/README.md).
+Le DAG `eco2mix_history_to_bronze` rattrape alors l'historique mois par mois depuis janvier 2012, en quelques minutes. Chaque mois chargé met à jour l'Asset de la table bronze, ce qui déclenche `dbt_transformations` : silver et gold sont mises à jour et les tests lancés. Ensuite, chaque dimanche, `eco2mix_history_refresh` recharge les 24 derniers mois, pour prendre les données consolidées et définitives que RTE publie avec plusieurs mois de retard, et `iceberg_maintenance` compacte chaque jour les tables bronze, puis lance le ramasse-miettes de Nessie (ADR 013). Les détails sont dans [ingestion/README.md](ingestion/README.md) et [transform/README.md](transform/README.md).
 
 ### Interroger la stack
 
@@ -254,6 +250,7 @@ kubectl --context k3d-wattlake -n wattlake port-forward svc/nessie 19120:19120  
 kubectl --context k3d-wattlake -n wattlake port-forward svc/airflow-api-server 8081:8080  # Airflow : http://127.0.0.1:8081
 kubectl --context k3d-wattlake -n monitoring port-forward svc/monitoring-grafana 3000:80   # Grafana : http://127.0.0.1:3000
 kubectl --context k3d-wattlake -n monitoring port-forward svc/monitoring-kube-prometheus-alertmanager 9093:9093   # Alertmanager : http://127.0.0.1:9093
+kubectl --context k3d-wattlake -n argocd port-forward svc/argocd-server 8082:80  # Argo CD : http://127.0.0.1:8082
 
 # Mot de passe de l'utilisateur « admin » d'Airflow
 kubectl --context k3d-wattlake -n wattlake get secret airflow-credentials \
@@ -262,6 +259,10 @@ kubectl --context k3d-wattlake -n wattlake get secret airflow-credentials \
 # Mot de passe de l'utilisateur « admin » de Grafana
 kubectl --context k3d-wattlake -n monitoring get secret grafana-admin \
   -o jsonpath='{.data.admin-password}' | base64 --decode
+
+# Mot de passe de l'utilisateur « admin » d'Argo CD, généré par Argo CD à l'installation
+kubectl --context k3d-wattlake -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 --decode
 ```
 
 Une fois la chaîne passée, la part des renouvelables se lit dans la couche gold :
@@ -306,19 +307,6 @@ Sur `main`, les images sont publiées sur `ghcr.io/maeva-rodrigues/wattlake-airf
 
 `dbt build` et les tests unitaires dbt ne tournent pas en CI : ils demandent Trino et la table bronze. Ils tournent dans le cluster, avec `make dbt ARGS="build"` ou le DAG `dbt_transformations`.
 
-### Mettre à jour les versions
-
-Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) propose chaque semaine les mises à jour des actions et des dépendances propres à l'ingestion (PyIceberg, pytest, respx), avec un délai de 14 jours après publication (règle des deux semaines). Les mises à jour de sécurité ne sont pas retardées.
-
-Le reste se met à jour à la main, en vérifiant que chaque version a au moins deux semaines :
-
-- **Airflow et les paquets épinglés sur ses contraintes** (`httpx`, `pyarrow`, `s3fs`, `sqlalchemy`), que Dependabot ignore : une autre version de ces paquets est impossible à installer avec les contraintes d'Airflow 3.2.2, et la CI le refuse. Monter de version Airflow change ensemble l'image de base et `apache-airflow==` dans [`ingestion/Dockerfile`](ingestion/Dockerfile), l'URL des contraintes (Dockerfile, Makefile et [`tests/catalog/run.sh`](tests/catalog/run.sh)), `airflowVersion` dans [`infra/airflow/values.yaml`](infra/airflow/values.yaml), le chart, puis ces paquets ;
-- les charts Helm et la version de Python, dans le [`Makefile`](Makefile) ;
-- l'image de `promtool` (`PROMETHEUS_IMAGE` dans le Makefile), qui suit la version de Prometheus déployée par le chart `kube-prometheus-stack` ;
-- les tags d'images dans les fichiers de valeurs de [`infra/`](infra/) ;
-- les dépendances de dbt : modifier [`transform/requirements.in`](transform/requirements.in), puis `make transform-lock`, qui régénère `requirements.txt` en ignorant les versions de moins de 14 jours ;
-- les dépendances du flux temps réel : modifier [`streaming/pyproject.toml`](streaming/pyproject.toml), puis `make streaming-lock`, qui régénère `requirements.txt` et `requirements-test.txt`, empreintes comprises, avec la même règle. Dependabot ne suit que l'image de base, et seulement ses correctifs (3.13.x).
-
 ### Mettre en pause et supprimer
 
 ```bash
@@ -329,6 +317,8 @@ make down            # supprime le cluster et toutes ses données (alias de clus
 ```
 
 Le catalogue de Nessie (branches, commits, emplacement des tables) est stocké dans PostgreSQL : il survit au redémarrage de Nessie et à `make cluster-stop`, mais pas à `make down`, qui supprime aussi les volumes.
+
+Pour déployer une modification ou mettre à jour les versions, voir [docs/exploitation.md](docs/exploitation.md).
 
 ## Choix techniques
 
